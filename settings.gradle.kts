@@ -95,7 +95,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "echatApp"
+rootProject.name = "Elora"
 include(":app")
 include(":core")
 include(":integration:analytics-appsflyer")
