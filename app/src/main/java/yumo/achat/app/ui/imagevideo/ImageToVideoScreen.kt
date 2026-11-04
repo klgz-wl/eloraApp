@@ -67,6 +67,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -146,15 +147,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.filterNotNull
 import yumo.achat.app.R
 import yumo.achat.app.BuildConfig
 import yumo.achat.app.analytics.AchatAnalyticsRuntime
 import yumo.achat.app.analytics.GenerationAnalytics
 import yumo.achat.app.analytics.GenerationAnalyticsContext
-import yumo.achat.app.analytics.AnalyticsConsent
-import yumo.achat.app.attribution.AchatAttributionRuntime
-import yumo.achat.app.attribution.AppsFlyerBackendAttribution
 import yumo.achat.core.backend.AchatRepository
 import yumo.achat.core.backend.AuthSession
 import yumo.achat.core.backend.SignedOutException
@@ -171,8 +168,11 @@ import yumo.achat.core.backend.hasMore
 import yumo.achat.app.ui.components.TransientMessage
 import yumo.achat.app.ui.components.TransientMessageHost
 import yumo.achat.app.ui.components.TransientMessageTone
+import yumo.achat.app.ui.error.diagnosticMessage
+import yumo.achat.app.ui.error.diagnosticString
 import yumo.achat.app.ui.login.LoginScreen
 import yumo.achat.app.ui.login.DeleteAccountDialog
+import yumo.achat.app.ui.login.AuthViewModel
 import yumo.achat.app.ui.report.MediaReportIconButton
 import yumo.achat.app.ui.report.MediaReportSheet
 import yumo.achat.app.ui.theme.AchatCyan
@@ -524,39 +524,31 @@ internal fun formatStoreMoney(amount: BigDecimal, currencyCode: String, locale: 
 }
 
 @Composable
-fun ImageToVideoScreen(modifier: Modifier = Modifier, onAuthFlowStart: () -> Unit = {}, onSignedOut: () -> Unit = {}) {
+fun ImageToVideoScreen(
+    modifier: Modifier = Modifier,
+    onAuthFlowStart: () -> Unit = {},
+    onSignedOut: () -> Unit = {},
+    onSessionRestored: () -> Unit = {},
+) {
     val localContext = LocalContext.current
     val context = localContext.applicationContext
-    val repository = remember(context) { createAchatRepository(context) }
-    val attributionRuntime = remember(context) {
-        if (AnalyticsConsent.granted(context) && BuildConfig.ENABLE_APPSFLYER) AchatAttributionRuntime.get(context) else null
-    }
-    val startupController = remember(attributionRuntime) {
-        HomeStartupController(
-            awaitPreAuth = { attributionRuntime?.awaitSplashPreAuthWindow() },
-            awaitPostAuth = { attributionRuntime?.awaitSplashPostAuthWindow() },
-            awaitHomeWindow = { attributionRuntime?.awaitHomeWindow() },
-            awaitHomeDataGate = { attributionRuntime?.awaitHomeDataGate() },
-            networkTimeoutMillis = BuildConfig.STARTUP_TIMEOUT_MS.toLong(),
-            attributionCompleted = { attributionRuntime?.isAttributionComplete() == true },
-        )
-    }
+    val authViewModel: AuthViewModel = viewModel()
+    val repository = authViewModel.repository
+    val attributionRuntime = authViewModel.attribution
     var startup by remember { mutableStateOf<Pair<AuthSession, UserProfile>?>(null) }
     var startupError by remember { mutableStateOf<String?>(null) }
     var startupRetry by remember { mutableIntStateOf(0) }
     var loginRequired by remember { mutableStateOf(false) }
     var loginSubmitting by remember { mutableStateOf(false) }
     var loginError by remember { mutableStateOf<String?>(null) }
-    var pendingAuthenticatedLogin by remember { mutableStateOf(false) }
     val loginScope = rememberCoroutineScope()
-    val sessionInvalidated by repository.sessionInvalidated.collectAsState()
+    val sessionInvalidated by authViewModel.sessionInvalidated.collectAsState()
     LaunchedEffect(sessionInvalidated) {
         if (sessionInvalidated) {
-            attributionRuntime?.onSignedOut()
+            authViewModel.onSignedOut()
             startup = null
             loginRequired = true
             loginError = null
-            pendingAuthenticatedLogin = false
             onSignedOut()
         }
     }
@@ -565,25 +557,15 @@ fun ImageToVideoScreen(modifier: Modifier = Modifier, onAuthFlowStart: () -> Uni
         if (startup != null || loginRequired) return@LaunchedEffect
         startupError = null
         try {
-            val restored = repository.authenticateStartup()
+            val restored = authViewModel.authenticateStartup(onSessionRestored)
             if (restored == null) {
                 loginRequired = true
             } else {
-                onAuthFlowStart()
-                attributionRuntime?.resumeRestoredSessionAttribution()
-                startup = if (pendingAuthenticatedLogin) {
-                    startupController.resumeAfterAuthentication(restored, repository::loadStartupProfile)
-                } else {
-                    val profile = withTimeout(BuildConfig.STARTUP_TIMEOUT_MS.toLong()) { repository.loadStartupProfile() }
-                    restored to profile
-                }
-                pendingAuthenticatedLogin = false
+                startup = restored
             }
         } catch (_: SignedOutException) {
-            attributionRuntime?.onSignedOut()
+            authViewModel.onSignedOut()
             loginRequired = true
-        } catch (_: TimeoutCancellationException) {
-            startupError = context.getString(R.string.startup_unavailable)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -594,31 +576,20 @@ fun ImageToVideoScreen(modifier: Modifier = Modifier, onAuthFlowStart: () -> Uni
         if (loginSubmitting) return
         loginSubmitting = true
         loginError = null
-        onAuthFlowStart()
         loginScope.launch {
             try {
-                val saved = repository.authenticateStartup()
-                val result = if (saved != null) {
-                    startupController.resumeAfterAuthentication(saved, repository::loadStartupProfile)
-                } else {
-                    startupController.startup(
-                        authenticate = {
-                            if (account == null) repository.loginAnonymously()
-                            else repository.register(account, requireNotNull(password))
-                        },
-                        profile = repository::loadStartupProfile,
-                    )
-                }
+                val result = if (account == null) authViewModel.loginAnonymously(onAuthFlowStart)
+                    else authViewModel.register(account, requireNotNull(password), onAuthFlowStart)
                 startup = result
                 loginRequired = false
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                if (runCatching { repository.authenticateStartup() }.getOrNull() != null) {
-                    pendingAuthenticatedLogin = true
+                if (authViewModel.hasAuthenticatedSession) {
                     loginRequired = false
                     startupError = context.getString(R.string.startup_unavailable)
                 } else {
+                    authViewModel.pauseForLoginChoice()
                     loginError = context.getString(R.string.login_failed)
                 }
             } finally {
@@ -657,12 +628,12 @@ fun ImageToVideoScreen(modifier: Modifier = Modifier, onAuthFlowStart: () -> Uni
     }
     ImageToVideoHomeScreen(
         repository = repository,
-        attributionRuntime = attributionRuntime,
-        startupController = startupController,
+        authViewModel = authViewModel,
         startupSession = ready.first,
         startupProfile = ready.second,
         onSignedOut = {
             startup = null
+            authViewModel.pauseForLoginChoice()
             loginRequired = true
             loginError = null
             onSignedOut()
@@ -685,10 +656,25 @@ private fun StartupSplash(error: String?, onRetry: () -> Unit, modifier: Modifie
 }
 
 @Composable
+internal fun AttributionProfileRetry(required: Boolean, onRetry: () -> Unit) {
+    if (!required) return
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(stringResource(R.string.startup_unavailable), color = Color.White,
+            style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+        TextButton(onClick = onRetry) {
+            Text(stringResource(R.string.template_feed_retry), color = AchatCyan)
+        }
+    }
+}
+
+@Composable
 private fun ImageToVideoHomeScreen(
     repository: AchatRepository,
-    attributionRuntime: AppsFlyerBackendAttribution?,
-    startupController: HomeStartupController,
+    authViewModel: AuthViewModel,
     startupSession: AuthSession,
     startupProfile: UserProfile,
     onSignedOut: () -> Unit,
@@ -698,6 +684,7 @@ private fun ImageToVideoHomeScreen(
     val context = localContext.applicationContext
     val localTaskStore = remember(context) { LocalGenerationTaskStore(context) }
     val analytics = remember(context) { AchatAnalyticsRuntime.get(context) }
+    val attributionRuntime = authViewModel.attribution
     val homeGateRevision by attributionRuntime?.homeGateRevision?.collectAsState()
         ?: remember { mutableStateOf(0L) }
     val screenScope = rememberCoroutineScope()
@@ -710,16 +697,15 @@ private fun ImageToVideoHomeScreen(
         accountActionError = null
         screenScope.launch {
             try {
-                if (delete) repository.deleteAccount() else repository.logout()
-                attributionRuntime?.onSignedOut()
+                authViewModel.logout(delete)
                 analytics.identify(null)
                 onSignedOut()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                accountActionError = context.getString(
+                accountActionError = context.diagnosticMessage(context.getString(
                     if (delete) R.string.account_delete_failed else R.string.account_logout_failed,
-                )
+                ), businessOperationDiagnostic(error, if (delete) "E-703" else "E-702"))
             } finally {
                 accountActionBusy = false
             }
@@ -885,7 +871,7 @@ private fun ImageToVideoHomeScreen(
         templateRequestJobs[jobIndex]?.cancel()
         templateRequestJobs[jobIndex] = screenScope.launch {
             val result = try {
-                startupController.loadTemplates {
+                authViewModel.loadTemplates {
                     if (attributionRuntime != null && (gateRevisionAtStart != attributionRuntime.homeGateRevision.value ||
                             gateTargetAtStart != attributionRuntime.currentGateTarget())) {
                         throw CancellationException("Home attribution changed")
@@ -900,7 +886,10 @@ private fun ImageToVideoHomeScreen(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                TemplateLoadResult(templates = emptyList(), errorMessage = error.message ?: "Backend unavailable")
+                TemplateLoadResult(
+                    templates = emptyList(), errorMessage = error.message ?: "Backend unavailable",
+                    sessionUnavailable = businessOperationDiagnostic(error, "") == "E-207",
+                )
             }
             if (attributionRuntime != null && (gateRevisionAtStart != attributionRuntime.homeGateRevision.value ||
                     gateTargetAtStart != attributionRuntime.currentGateTarget())) return@launch
@@ -910,7 +899,11 @@ private fun ImageToVideoHomeScreen(
             }
             if (!isLatestRequest) return@launch
             val fallback = if (section == TemplateSection.Video) videoTemplatesFallback else imageTemplatesFallback
-            val errorMessage = result.errorMessage?.let { apiEnvelopeUserMessage(it, fallback) }
+            val errorMessage = result.errorMessage?.let {
+                val body = if (append) context.getString(R.string.template_load_more_retry)
+                    else apiEnvelopeUserMessage(it, fallback)
+                context.diagnosticMessage(body, if (result.sessionUnavailable) "E-207" else "E-501")
+            }
             backendState = backendState.withTemplateLoadResult(
                 modality = modality,
                 result = result.copy(errorMessage = errorMessage),
@@ -921,7 +914,7 @@ private fun ImageToVideoHomeScreen(
 
     fun retryTemplates(section: TemplateSection) {
         if (backendState.errorMessage != null || templateRetryAction(backendState, section) == TemplateRetryAction.Startup) {
-            attributionRuntime?.retryHomeReport()
+            authViewModel.retryHome()
             startupReloadSerial += 1
             return
         }
@@ -978,7 +971,10 @@ private fun ImageToVideoHomeScreen(
                 throw cancelled
             } catch (error: Exception) {
                 if (refreshSerialAtStart == taskHistoryRefreshSerial) {
-                    taskHistoryPaginationError = error.message ?: "Failed to load more task history"
+                    taskHistoryPaginationError = context.diagnosticMessage(
+                        context.getString(R.string.task_history_load_more_retry),
+                        businessOperationDiagnostic(error, "E-501"),
+                    )
                 }
             } finally {
                 if (refreshSerialAtStart == taskHistoryRefreshSerial) taskHistoryPaginationLoading = false
@@ -1252,29 +1248,11 @@ private fun ImageToVideoHomeScreen(
         topUpPaymentViewModel.startReconciliation()
     }
 
-    LaunchedEffect(attributionRuntime, repository, startupSession) {
-        attributionRuntime?.reportReceipts?.filterNotNull()?.collectLatest { receipt ->
-            if (receipt.epoch != startupSession.epoch) return@collectLatest
-            attributionRuntime.awaitHomeDataGate()
-            repeat(BuildConfig.ATTRIBUTION_RETRY_ATTEMPTS.coerceAtLeast(1)) { attempt ->
-                val profile = try {
-                    withTimeout(BuildConfig.STARTUP_TIMEOUT_MS.toLong()) { repository.userProfileSnapshot() }
-                } catch (_: TimeoutCancellationException) {
-                    null
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    null
-                }
-                if (profile != null && attributionRuntime.isCurrentReceipt(receipt) &&
-                    attributionRuntime.reportReceipts.value == receipt && analytics.currentUserId() == startupSession.userId) {
-                    applyProfile(profile)
-                    analytics.mode(if (profile.isNew == true) "B" else "A")
-                    return@collectLatest
-                }
-                if (attempt + 1 < BuildConfig.ATTRIBUTION_RETRY_ATTEMPTS) {
-                    delay(BuildConfig.ATTRIBUTION_RETRY_INTERVAL_MS.toLong())
-                }
+    LaunchedEffect(authViewModel, startupSession) {
+        authViewModel.collectAttributionProfiles(startupSession) { profile ->
+            if (analytics.currentUserId() == startupSession.userId) {
+                applyProfile(profile)
+                analytics.mode(if (profile.isNew == true) "B" else "A")
             }
         }
     }
@@ -1295,7 +1273,7 @@ private fun ImageToVideoHomeScreen(
             imageTemplateErrorMessage = null,
         )
         try {
-            val homeData = startupController.loadHome {
+            val homeData = authViewModel.loadHome {
                 if (attributionRuntime != null && (gateRevisionAtStart != attributionRuntime.homeGateRevision.value ||
                         gateTargetAtStart != attributionRuntime.currentGateTarget())) {
                     throw CancellationException("Home attribution changed")
@@ -1324,12 +1302,18 @@ private fun ImageToVideoHomeScreen(
                 videoTemplatesLoading = if (applyStartupVideo) false else backendState.videoTemplatesLoading,
                 imageTemplatesLoading = if (applyStartupImage) false else backendState.imageTemplatesLoading,
                 videoTemplateErrorMessage = if (applyStartupVideo) {
-                    homeData.videoTemplateErrorMessage?.let { apiEnvelopeUserMessage(it, videoTemplatesFallback) }
+                    homeData.videoTemplateErrorMessage?.let {
+                        context.diagnosticMessage(apiEnvelopeUserMessage(it, videoTemplatesFallback),
+                            if (homeData.videoTemplateSessionUnavailable) "E-207" else "E-501")
+                    }
                 } else {
                     backendState.videoTemplateErrorMessage
                 },
                 imageTemplateErrorMessage = if (applyStartupImage) {
-                    homeData.imageTemplateErrorMessage?.let { apiEnvelopeUserMessage(it, imageTemplatesFallback) }
+                    homeData.imageTemplateErrorMessage?.let {
+                        context.diagnosticMessage(apiEnvelopeUserMessage(it, imageTemplatesFallback),
+                            if (homeData.imageTemplateSessionUnavailable) "E-207" else "E-501")
+                    }
                 } else {
                     backendState.imageTemplateErrorMessage
                 },
@@ -1353,12 +1337,12 @@ private fun ImageToVideoHomeScreen(
                 videoTemplatesLoading = if (applyStartupVideo) false else backendState.videoTemplatesLoading,
                 imageTemplatesLoading = if (applyStartupImage) false else backendState.imageTemplatesLoading,
                 videoTemplateErrorMessage = if (applyStartupVideo) {
-                    apiEnvelopeUserMessage(rawMessage, videoTemplatesFallback)
+                    context.diagnosticMessage(operationUserMessage(error, videoTemplatesFallback), businessOperationDiagnostic(error, "E-501"))
                 } else {
                     backendState.videoTemplateErrorMessage
                 },
                 imageTemplateErrorMessage = if (applyStartupImage) {
-                    apiEnvelopeUserMessage(rawMessage, imageTemplatesFallback)
+                    context.diagnosticMessage(operationUserMessage(error, imageTemplatesFallback), businessOperationDiagnostic(error, "E-501"))
                 } else {
                     backendState.imageTemplateErrorMessage
                 },
@@ -1399,7 +1383,10 @@ private fun ImageToVideoHomeScreen(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            taskHistoryError = error.message ?: "Failed to load task history"
+            taskHistoryError = context.diagnosticMessage(
+                operationUserMessage(error, context.getString(R.string.task_history_load_error)),
+                businessOperationDiagnostic(error, "E-501"),
+            )
             isLoadingTaskHistory = false
         }
     }
@@ -1442,10 +1429,10 @@ private fun ImageToVideoHomeScreen(
             throw error
         } catch (error: Exception) {
             topUpState = TopUpUiState(
-                errorMessage = apiEnvelopeUserMessage(
-                    error.message,
+                errorMessage = context.diagnosticMessage(operationUserMessage(
+                    error,
                     context.getString(R.string.top_up_error),
-                ),
+                ), businessOperationDiagnostic(error, "E-501")),
                 diamondBalance = backendState.diamondBalance,
             )
         }
@@ -1639,6 +1626,8 @@ private fun ImageToVideoHomeScreen(
                     isAvatarSaving = profileEditingController.avatarSaving,
                     localProfileAvatarUri = localProfileAvatarUri,
                     onTemplateRetry = ::retryTemplates,
+                    attributionProfileRetryRequired = authViewModel.attributionProfileRetryRequired,
+                    onAttributionProfileRetry = authViewModel::retryProfileRefresh,
                     onLoadMoreTemplates = ::loadNextTemplatePage,
                     onNavigationSelect = ::navigateFromBottomNavigation,
                     selectedProductId = topUpPaymentController.selectedProductId,
@@ -1849,6 +1838,8 @@ private fun TemplateBrowserScreen(
     edgeHint: TransientMessage?,
     onEdgeHintDismiss: (Long) -> Unit,
     backendState: AchatBackendUiState,
+    attributionProfileRetryRequired: Boolean = false,
+    onAttributionProfileRetry: () -> Unit = {},
 ) {
     if (selectedNavigation == 2) {
         TopUpScreen(
@@ -1983,6 +1974,7 @@ private fun TemplateBrowserScreen(
             .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
         Header(section = section, diamondBalance = backendState.diamondBalance, onBalanceClick = onBalanceClick)
+        AttributionProfileRetry(attributionProfileRetryRequired, onAttributionProfileRetry)
         Spacer(Modifier.height(8.dp))
         if (shouldShowTemplateTabs(section)) {
             CategoryTabs(
@@ -2021,7 +2013,7 @@ private fun TemplateBrowserScreen(
                 modifier = Modifier.align(Alignment.CenterHorizontally),
             )
             !paginationErrorMessage.isNullOrBlank() -> Text(
-                text = stringResource(R.string.template_load_more_retry),
+                text = paginationErrorMessage,
                 color = AchatPink,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
@@ -2916,7 +2908,7 @@ internal fun MyTasksScreen(
                             )
                         } else if (!paginationError.isNullOrBlank()) {
                             Text(
-                                text = stringResource(R.string.task_history_load_more_retry),
+                                text = paginationError,
                                 color = AchatPink,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier
@@ -3010,7 +3002,9 @@ private fun TaskStatusCard(task: TrackedGenerationTask, onOpen: () -> Unit) {
             if (!task.errorMessage.isNullOrBlank()) {
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    text = task.errorMessage,
+                    text = if (task.status == "failed") diagnosticString(
+                        apiEnvelopeUserMessage(task.errorMessage, stringResource(R.string.task_failed_fallback)), "E-401",
+                    ) else apiEnvelopeUserMessage(task.errorMessage, stringResource(R.string.default_task_title)),
                     color = AchatPink.copy(alpha = 0.9f),
                     fontSize = 9.sp,
                 )
@@ -3111,7 +3105,7 @@ internal fun GenerationResultScreen(
                     if (videoPlaybackFailed) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
-                                text = stringResource(R.string.task_result_file_unavailable),
+                                text = diagnosticString(stringResource(R.string.task_result_file_unavailable), "E-302"),
                                 color = AchatMuted,
                                 fontSize = 11.sp,
                             )
@@ -3144,7 +3138,7 @@ internal fun GenerationResultScreen(
                     }
                 } else {
                     Text(
-                        text = stringResource(R.string.task_result_preview_unavailable),
+                        text = diagnosticString(stringResource(R.string.task_result_preview_unavailable), "E-404"),
                         color = AchatMuted,
                         fontSize = 11.sp,
                     )
@@ -3240,7 +3234,7 @@ private fun MyTaskProgressiveImage(
         }
         if (shouldShowMyTaskImageRetry(hasFullImageError)) {
             Text(
-                text = stringResource(R.string.template_feed_retry),
+                text = diagnosticString(stringResource(R.string.template_feed_retry), "E-302"),
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
@@ -4125,6 +4119,7 @@ internal fun TopUpScreen(
                         val isPreparing = purchaseState is TopUpPurchaseState.Preparing
                         val terminalCheckout = checkoutState is TopUpCheckoutState.Failed ||
                             checkoutState == TopUpCheckoutState.Cancelled ||
+                            checkoutState == TopUpCheckoutState.UserCancelled ||
                             checkoutState == TopUpCheckoutState.TimedOut ||
                             checkoutState is TopUpCheckoutState.Succeeded
                         val isReady = (purchaseState is TopUpPurchaseState.OfficialReady ||
@@ -4153,7 +4148,8 @@ internal fun TopUpScreen(
                 StartChatButton(
                     label = stringResource(R.string.top_up_try_again),
                     enabled = !isReconciling && (checkoutState is TopUpCheckoutState.Failed ||
-                        checkoutState == TopUpCheckoutState.Cancelled || checkoutState == TopUpCheckoutState.TimedOut),
+                        checkoutState == TopUpCheckoutState.Cancelled || checkoutState == TopUpCheckoutState.UserCancelled ||
+                        checkoutState == TopUpCheckoutState.TimedOut),
                     onClick = onPreparePayment,
                 )
             }
@@ -4179,10 +4175,15 @@ private fun TopUpPurchaseStatus(state: TopUpPurchaseState, checkoutState: TopUpC
         )
         is TopUpCheckoutState.Succeeded -> TopUpInlineStatus(stringResource(R.string.top_up_payment_success), AchatCyan)
         is TopUpCheckoutState.Failed -> TopUpInlineStatus(
-            (checkoutState.messageRes?.let { stringResource(it) } ?: checkoutState.message) +
-                (checkoutState.recoverySummary?.let { "\n$it" } ?: ""), AchatPink,
+            if (checkoutState.recoverySummary != null) diagnosticString(
+                (checkoutState.messageRes?.let { stringResource(it) } ?: checkoutState.message) +
+                    "\n${checkoutState.recoverySummary}", "E-602",
+            ) else checkoutState.messageRes?.let { stringResource(it) } ?: checkoutState.message, AchatPink,
         )
         TopUpCheckoutState.Cancelled -> TopUpInlineStatus(stringResource(R.string.top_up_payment_cancelled), AchatMuted)
+        TopUpCheckoutState.UserCancelled -> TopUpInlineStatus(
+            diagnosticString(stringResource(R.string.top_up_payment_cancelled), "E-603"), AchatMuted,
+        )
         TopUpCheckoutState.TimedOut -> TopUpInlineStatus(stringResource(R.string.top_up_payment_timeout), AchatPink)
     }
     if (checkoutState != TopUpCheckoutState.Idle) return
@@ -4335,8 +4336,8 @@ internal fun ThirdPartyCheckoutOverlay(
         }
         if (remaining != 0L && (pageLoadFailed || recoveryMessageRes != null)) {
             Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(stringResource(if (pageLoadFailed) R.string.top_up_payment_network_error
-                    else recoveryMessageRes ?: R.string.top_up_payment_network_error), color = AchatPink,
+                Text(if (pageLoadFailed) diagnosticString(stringResource(R.string.top_up_payment_network_error), "E-303")
+                    else stringResource(recoveryMessageRes ?: R.string.top_up_payment_network_error), color = AchatPink,
                     style = MaterialTheme.typography.bodySmall)
                 StartChatButton(
                     label = stringResource(if (pageLoadFailed) R.string.top_up_retry else recoveryActionRes ?: R.string.top_up_retry),
@@ -4775,22 +4776,24 @@ private fun UploadPhotoScreen(
         uploadInProgress = true
         uploadMessage = null
         scope.launch {
-            runCatching {
-                repository.uploadSourceImage(uri)
-            }.onSuccess { resource ->
+            try {
+                val resource = repository.uploadSourceImage(uri)
                 uploadedResourceId = resource.id
                 showUploadMessage(
                     text = uploadSuccessPattern.format(resource.id.take(8)),
                     tone = TransientMessageTone.Success,
                 )
-            }.onFailure { error ->
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
                 uploadedResourceId = null
                 showUploadMessage(
-                    text = visualGenerationUserMessage(error.message, uploadFailedMessage),
+                    text = context.diagnosticMessage(operationUserMessage(error, uploadFailedMessage), imageUploadDiagnostic(error)),
                     tone = TransientMessageTone.Error,
                 )
+            } finally {
+                uploadInProgress = false
             }
-            uploadInProgress = false
         }
     }
     val pickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -4846,7 +4849,9 @@ private fun UploadPhotoScreen(
                 )
             } else {
                 showUploadMessage(
-                    text = taskFailedPattern.format(task.errorMessage ?: task.status),
+                    text = context.diagnosticMessage(
+                        taskFailedPattern.format(apiEnvelopeUserMessage(task.errorMessage, task.status)), "E-401",
+                    ),
                     tone = TransientMessageTone.Error,
                 )
             }
@@ -4933,15 +4938,14 @@ private fun UploadPhotoScreen(
                 generationSubmissionKey = submissionKey
                 generationAnalytics.clickGenerate(template.analyticsContext(), submissionKey.idempotencyKey)
                 scope.launch {
-                    runCatching {
-                        repository.createVisualGenerationTask(
+                    try {
+                        val task = repository.createVisualGenerationTask(
                             modality = template.modality,
                             templateId = template.templateId,
                             quality = template.quality,
                             resourceId = resourceId,
                             idempotencyKey = submissionKey.idempotencyKey,
                         )
-                    }.onSuccess { task ->
                         generationAnalytics.submitResult(
                             template.analyticsContext(), submissionKey.idempotencyKey, task, null,
                         )
@@ -4958,12 +4962,14 @@ private fun UploadPhotoScreen(
                             ),
                         )
                         showUploadMessage(taskCreatedPattern.format(task.taskId.take(8), task.status))
-                    }.onFailure { error ->
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
                         generationAnalytics.submitResult(
                             template.analyticsContext(), submissionKey.idempotencyKey, null, error,
                         )
                         showUploadMessage(
-                            text = visualGenerationUserMessage(error.message, uploadFailedMessage),
+                            text = context.diagnosticMessage(operationUserMessage(error, uploadFailedMessage), generationSubmissionDiagnostic(error)),
                             tone = TransientMessageTone.Error,
                         )
                         val topUpRouteDelayMillis = generationTopUpRouteDelayMillis(error.message)
@@ -4971,8 +4977,9 @@ private fun UploadPhotoScreen(
                             delay(topUpRouteDelayMillis)
                             onInsufficientBalanceTopUp()
                         }
+                    } finally {
+                        uploadInProgress = false
                     }
-                    uploadInProgress = false
                 }
             },
         )

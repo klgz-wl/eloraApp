@@ -48,6 +48,7 @@ internal sealed interface TopUpCheckoutState {
         val recoverySummary: String? = null,
     ) : TopUpCheckoutState
     data object Cancelled : TopUpCheckoutState
+    data object UserCancelled : TopUpCheckoutState
     data object TimedOut : TopUpCheckoutState
 }
 
@@ -188,7 +189,7 @@ internal class CoreTopUpPaymentController(
 
     fun syncSession(session: AuthSession) {
         scope.launch {
-            sessions.restore()
+            sessions.synchronize()
             val current = sessions.current
             if (current?.userId != session.userId || current.token != session.token || current.refreshToken != session.refreshToken) {
                 sessions.saveLogin(AuthResponse(session.token, session.refreshToken, session.userId))
@@ -365,7 +366,7 @@ internal fun PaymentViewState.toTopUpCheckoutState(purchase: CoinPurchaseState):
         when (purchase.status) {
             CoinPurchaseStatus.PENDING -> return TopUpCheckoutState.AwaitingPayment(true)
             CoinPurchaseStatus.AWAITING_FULFILLMENT -> return TopUpCheckoutState.AwaitingPayment(false)
-            CoinPurchaseStatus.CANCELLED -> return TopUpCheckoutState.Cancelled
+            CoinPurchaseStatus.CANCELLED -> return TopUpCheckoutState.UserCancelled
             CoinPurchaseStatus.FAILED -> return TopUpCheckoutState.Failed("", retryPreparedRoute = true, messageRes = R.string.top_up_payment_failed)
             else -> Unit
         }

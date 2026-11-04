@@ -44,8 +44,18 @@ class AchatRepository(
         sessionManager.startupSession()
     }
 
+    suspend fun savedSession(): AuthSession? = withContext(Dispatchers.IO) { sessionManager.session() }
+
     suspend fun loginAnonymously(): AuthSession = withContext(Dispatchers.IO) {
         sessionManager.loginAnonymouslyExplicit()
+    }
+
+    suspend fun prepareAnonymousDeviceIdentity(): Unit = withContext(Dispatchers.IO) {
+        sessionManager.prepareAnonymousDeviceIdentity()
+    }
+
+    suspend fun prepareAccountDeviceIdentity(): Unit = withContext(Dispatchers.IO) {
+        sessionManager.prepareAccountDeviceIdentity()
     }
 
     suspend fun register(username: String, password: String): AuthSession = withContext(Dispatchers.IO) {
@@ -98,6 +108,8 @@ class AchatRepository(
                 imageTemplates = loadedImageTemplates.templates,
                 videoTemplateErrorMessage = loadedVideoTemplates.errorMessage,
                 imageTemplateErrorMessage = loadedImageTemplates.errorMessage,
+                videoTemplateSessionUnavailable = loadedVideoTemplates.sessionUnavailable,
+                imageTemplateSessionUnavailable = loadedImageTemplates.sessionUnavailable,
                 videoCategories = videoCategories.await(),
                 imageCategories = imageCategories.await(),
                 videoTemplatePage = loadedVideoTemplates.page,
@@ -131,17 +143,19 @@ class AchatRepository(
     }
 
     suspend fun uploadSourceImage(uri: Uri): VisualResource = withContext(Dispatchers.IO) {
-        val resolver = appContext.contentResolver
-        val contentType = resolver.getType(uri)?.takeIf { it.isNotBlank() } ?: "image/jpeg"
-        val fileName = resolver.displayName(uri) ?: defaultFileName(contentType)
-        val bytes = resolver.openInputStream(uri)?.use { input -> input.readBytes() }
-            ?: error("Unable to read selected image")
-        val part = MultipartFormData.imagePart(
-            fieldName = "image",
-            fileName = fileName,
-            contentType = contentType,
-            bytes = bytes,
-        )
+        val part = prepareImageUpload {
+            val resolver = appContext.contentResolver
+            val contentType = resolver.getType(uri)?.takeIf { it.isNotBlank() } ?: "image/jpeg"
+            val fileName = resolver.displayName(uri) ?: defaultFileName(contentType)
+            val bytes = resolver.openInputStream(uri)?.use { input -> input.readBytes() }
+                ?: error("Unable to read selected image")
+            MultipartFormData.imagePart(
+                fieldName = "image",
+                fileName = fileName,
+                contentType = contentType,
+                bytes = bytes,
+            )
+        }
         sessionManager.authenticated { token -> client.uploadVisualResource(token, part) }
     }
 
@@ -155,15 +169,18 @@ class AchatRepository(
     }
 
     override suspend fun updateProfileAvatar(uri: Uri): UserProfile = withContext(Dispatchers.IO) {
-        val resolver = appContext.contentResolver
-        val contentType = validatedProfileAvatarContentType(resolver.getType(uri))
-        val fileName = resolver.displayName(uri) ?: defaultFileName(contentType)
-        val bytes = resolver.openInputStream(uri)?.use(::readProfileAvatarBytes)
-            ?: error("Unable to read selected image")
+        val parts = prepareImageUpload {
+            val resolver = appContext.contentResolver
+            val contentType = validatedProfileAvatarContentType(resolver.getType(uri))
+            val fileName = resolver.displayName(uri) ?: defaultFileName(contentType)
+            val bytes = resolver.openInputStream(uri)?.use(::readProfileAvatarBytes)
+                ?: error("Unable to read selected image")
+            profileAvatarUploadParts(fileName, contentType, bytes)
+        }
         val upload = sessionManager.authenticated { token ->
             client.uploadProfileAvatar(
                 token = token,
-                parts = profileAvatarUploadParts(fileName, contentType, bytes),
+                parts = parts,
             )
         }
         sessionManager.authenticated { token ->
@@ -178,9 +195,7 @@ class AchatRepository(
         resourceId: String,
         idempotencyKey: String,
     ): VisualGenerationTask = withContext(Dispatchers.IO) {
-        require(templateId.isNotBlank()) { "Live template is required" }
-        require(resourceId.isNotBlank()) { "Uploaded photo is required" }
-        require(idempotencyKey.isNotBlank()) { "Generation idempotency key is required" }
+        validateGenerationCreationInputs(templateId, resourceId, idempotencyKey)
         sessionManager.authenticated { token ->
             client.createVisualGenerationTask(
                 token = token,
@@ -207,7 +222,7 @@ class AchatRepository(
     }
 
     suspend fun userProfileSnapshot(): UserProfile = withContext(Dispatchers.IO) {
-        sessionManager.authenticated(client::userProfile).also {
+        sessionManager.authenticatedCancellable(client::userProfileCancellable).also {
             check(it.isNew != null) { "Profile is missing is_new" }
         }
     }

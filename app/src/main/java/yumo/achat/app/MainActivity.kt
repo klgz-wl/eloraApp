@@ -20,9 +20,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -51,8 +49,17 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var sessionCoordinatorProvider: Lazy<SessionCoordinator>
     @Inject lateinit var rechargeNotificationsProvider: Lazy<RechargeNotifications>
     private var businessStarted = false
-    private var attributionStarted = false
+    private val acquisitionAuthorization = AcquisitionAuthorization()
     private var regionAllowed = false
+
+    private fun attachAttributionActivity() {
+        if (BuildConfig.ENABLE_APPSFLYER && businessStarted && acquisitionAuthorization.canAttach(
+                resumed = lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED),
+                accessAllowed = regionAllowed,
+            )) {
+            AchatAttributionRuntime.get(this).onActivityResumed(this)
+        }
+    }
 
     private fun beginBusinessStartup() {
         if (businessStarted) return
@@ -92,8 +99,9 @@ class MainActivity : ComponentActivity() {
                     regionAllowed = state.allowed
                     if (state.allowed) {
                         beginBusinessStartup()
-                    } else if (attributionStarted) {
+                    } else if (acquisitionAuthorization.authorized) {
                         AchatAttributionRuntime.get(this@MainActivity).onAccessRevoked()
+                        acquisitionAuthorization.revoke()
                     }
                 }
                 BackHandler(enabled = !state.allowed) { finishAndRemoveTask() }
@@ -105,17 +113,24 @@ class MainActivity : ComponentActivity() {
                     )
                     else -> ImageToVideoScreen(
                         onAuthFlowStart = {
-                            if (!attributionStarted && AnalyticsConsent.granted(this@MainActivity) &&
-                                lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-                                AchatAttributionRuntime.get(this@MainActivity).onActivityResumed(this@MainActivity)
-                                attributionStarted = true
-                            }
+                            acquisitionAuthorization.authorize(
+                                validConsent = AnalyticsConsent.granted(this@MainActivity),
+                                accessAllowed = regionAllowed,
+                            )
+                            attachAttributionActivity()
+                        },
+                        onSessionRestored = {
+                            acquisitionAuthorization.authorize(
+                                validConsent = AnalyticsConsent.granted(this@MainActivity),
+                                accessAllowed = regionAllowed,
+                            )
+                            attachAttributionActivity()
                         },
                         onSignedOut = {
-                            if (attributionStarted) {
+                            if (acquisitionAuthorization.authorized) {
                                 AchatAttributionRuntime.get(this@MainActivity).onActivityPaused(this@MainActivity)
-                                attributionStarted = false
                             }
+                            acquisitionAuthorization.revoke()
                             lifecycleScope.launch { sessionCoordinatorProvider.get().synchronize() }
                         },
                     )
@@ -127,9 +142,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (businessStarted) lifecycleScope.launch(Dispatchers.IO) { AppConfigRuntime.get(applicationContext).refresh() }
-        if (businessStarted && regionAllowed && attributionStarted && AnalyticsConsent.granted(this)) {
-            AchatAttributionRuntime.get(this).onActivityResumed(this)
-        }
+        attachAttributionActivity()
     }
 
     override fun onStart() {
@@ -157,7 +170,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onPause() {
-        if (attributionStarted) {
+        if (acquisitionAuthorization.authorized) {
             AchatAttributionRuntime.get(this).onActivityPaused(this)
         }
         super.onPause()
@@ -165,34 +178,42 @@ class MainActivity : ComponentActivity() {
 
 }
 
+internal class AcquisitionAuthorization {
+    var authorized: Boolean = false
+        private set
+
+    fun authorize(validConsent: Boolean, accessAllowed: Boolean) {
+        authorized = validConsent && accessAllowed
+    }
+
+    fun canAttach(resumed: Boolean, accessAllowed: Boolean): Boolean = authorized && resumed && accessAllowed
+
+    fun revoke() { authorized = false }
+}
+
 @Composable
-private fun RegionGateScreen(state: RegionGateState, onRetry: () -> Unit, onExit: () -> Unit) {
+internal fun RegionGateScreen(state: RegionGateState, onRetry: () -> Unit, onExit: () -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             if (state.busy) {
                 CircularProgressIndicator()
                 Text(stringResource(R.string.region_checking))
             } else if (state.restricted) {
-                Text(stringResource(R.string.region_restricted))
-                RegionDiagnosticReference(state.diagnosticCode)
+                val body = stringResource(R.string.region_restricted)
+                Text(if (state.diagnosticCode == null) body else yumo.achat.app.ui.error.diagnosticString(
+                    body = body,
+                    code = state.diagnosticCode,
+                ))
                 Button(onClick = onExit) { Text(stringResource(R.string.region_exit)) }
             } else if (state.error) {
-                Text(stringResource(if (state.offline) R.string.region_offline else R.string.region_unavailable))
-                RegionDiagnosticReference(state.diagnosticCode)
+                val body = stringResource(if (state.offline) R.string.region_offline else R.string.region_unavailable)
+                Text(if (state.diagnosticCode == null) body else yumo.achat.app.ui.error.diagnosticString(
+                    body = body,
+                    code = state.diagnosticCode,
+                ))
                 Button(onClick = onRetry) { Text(stringResource(R.string.region_retry)) }
                 Button(onClick = onExit) { Text(stringResource(R.string.region_exit)) }
             }
         }
-    }
-}
-
-@Composable
-private fun RegionDiagnosticReference(code: String?) {
-    code?.let {
-        Text(
-            text = stringResource(R.string.region_reference, it),
-            color = Color.Gray,
-            fontSize = 13.sp,
-        )
     }
 }
