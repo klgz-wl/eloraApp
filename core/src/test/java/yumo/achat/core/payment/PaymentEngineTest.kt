@@ -8,6 +8,164 @@ import org.junit.Test
 import yumo.achat.core.wallet.CoinProduct
 
 class PaymentEngineTest {
+    @Test fun `legacy closed official record without cancellation field allows changing amount`() = runBlocking {
+        val f = Fixture(); f.login(); f.api.official = true
+        var engine = f.engine(); engine.buy("coins", "main")
+        val key = engine.state.value.record!!.key
+        engine.claimOfficial(key)
+        engine.officialResult(key, cancelledOrUnavailable = true)
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val encoded = json.encodeToString(kotlinx.serialization.builtins.ListSerializer(PaymentRecord.serializer()), f.store.records)
+        val legacy = kotlinx.serialization.json.Json.parseToJsonElement(encoded).let { array ->
+            kotlinx.serialization.json.JsonArray((array as kotlinx.serialization.json.JsonArray).map { row ->
+                kotlinx.serialization.json.JsonObject((row as kotlinx.serialization.json.JsonObject).filterKeys { it != "userCancelled" })
+            })
+        }
+        f.store.records = json.decodeFromString(kotlinx.serialization.builtins.ListSerializer(PaymentRecord.serializer()), legacy.toString())
+        engine = f.engine(); engine.restore()
+        assertTrue(engine.state.value.record!!.canChangeProductAfterCancellation)
+        engine.buy("other", "main")
+        assertEquals(2, f.orders)
+        assertEquals("other", engine.state.value.record!!.productId)
+    }
+
+    @Test fun `explicit non cancellation survives serialization and restart without becoming legacy`() = runBlocking {
+        val f = Fixture(); f.login(); f.api.official = true
+        val engine = f.engine(); engine.buy("coins", "main")
+        engine.claimOfficial(engine.state.value.record!!.key)
+        engine.officialResult(engine.state.value.record!!.key, cancelledOrUnavailable = true)
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val serializer = kotlinx.serialization.builtins.ListSerializer(PaymentRecord.serializer())
+        f.store.records = json.decodeFromString(serializer, json.encodeToString(serializer, f.store.records))
+        val restored = f.engine(); restored.restore()
+        assertFalse(restored.state.value.record!!.canChangeProductAfterCancellation)
+        restored.buy("other", "main")
+        assertEquals(1, f.orders)
+    }
+
+    @Test fun `explicit store cancel allows another package while preserving original order`() = runBlocking {
+        val f = Fixture(); f.login(); f.api.official = true
+        var engine = f.engine(); engine.buy("coins", "main")
+        val key = engine.state.value.record!!.key
+        engine.claimOfficial(key)
+        engine.officialResult(key, cancelledOrUnavailable = true, userCancelled = true)
+        assertTrue(engine.state.value.record!!.canChangeProductAfterCancellation)
+        engine = f.engine(); engine.restore()
+        assertTrue(engine.state.value.record!!.canChangeProductAfterCancellation)
+        engine.buy("other", "main")
+        assertEquals(2, f.orders)
+        assertEquals("other", engine.state.value.record!!.productId)
+        assertTrue(f.store.records.single { it.key == key }.unresolved)
+        f.api.status = "paid"; f.api.fulfillment = "fulfilled"
+        engine.recharge("order-1")
+        assertEquals(PaymentStage.SUCCESS, f.store.records.single { it.key == key }.stage)
+        assertEquals("other", engine.state.value.record!!.productId)
+    }
+
+    @Test fun `closing unpaid third party checkout allows choosing another package`() = runBlocking {
+        val f = Fixture(); f.login(); val engine = f.engine(); engine.buy("coins", "main")
+        val key = engine.state.value.record!!.key
+        engine.opened(key); engine.close(key)
+        assertTrue(engine.state.value.record!!.canChangeProductAfterCancellation)
+        engine.buy("other", "main")
+        assertEquals(2, f.orders)
+        assertEquals("other", engine.state.value.record!!.productId)
+    }
+
+    @Test fun `cancelled checkout cannot replace an order with unconfirmed close or paid fulfillment`() = runBlocking {
+        for (paid in listOf(false, true)) {
+            val f = Fixture(); f.login(); val engine = f.engine(); engine.buy("coins", "main")
+            val key = engine.state.value.record!!.key
+            engine.opened(key)
+            if (paid) f.api.status = "paid" else f.api.queryFailure = true
+            engine.close(key)
+            assertFalse(engine.state.value.record!!.canChangeProductAfterCancellation)
+            engine.buy("other", "main")
+            assertEquals(1, f.orders)
+            assertEquals(key, engine.state.value.record!!.key)
+        }
+    }
+
+    @Test fun `same package after explicit cancellation reuses original official order`() = runBlocking {
+        val f = Fixture(); f.login(); f.api.official = true
+        val engine = f.engine(); engine.buy("coins", "main")
+        val key = engine.state.value.record!!.key
+        engine.claimOfficial(key)
+        engine.officialResult(key, cancelledOrUnavailable = true, userCancelled = true)
+        engine.buy("coins", "main")
+        assertEquals(1, f.orders)
+        assertEquals(key, engine.state.value.record!!.key)
+        assertEquals(PaymentStage.OFFICIAL_READY, engine.state.value.record!!.stage)
+    }
+
+    @Test fun `late pending cancelled order cannot displace active replacement on restart or buy`() = runBlocking {
+        val f = Fixture(); f.login(); var engine = f.engine()
+        engine.buy("coins", "main"); val first = engine.state.value.record!!.key
+        engine.opened(first); engine.close(first)
+        engine.buy("other", "main"); val replacement = engine.state.value.record!!.key
+        engine.opened(replacement)
+        engine.recharge("order-1")
+        assertEquals(replacement, engine.state.value.record!!.key)
+        engine = f.engine(); engine.restore()
+        assertEquals(replacement, engine.state.value.record!!.key)
+        engine.buy("coins", "main")
+        assertEquals(replacement, engine.state.value.record!!.key)
+        assertEquals(2, f.orders)
+    }
+
+    @Test fun `programmatic checkout close does not count as user cancellation`() = runBlocking {
+        val f = Fixture(); f.login(); val engine = f.engine()
+        engine.buy("coins", "main"); val key = engine.state.value.record!!.key
+        engine.close(key, userCancelled = false)
+        assertFalse(engine.state.value.record!!.canChangeProductAfterCancellation)
+        engine.buy("other", "main")
+        assertEquals(1, f.orders)
+    }
+
+    @Test fun `unavailable store is not explicit cancellation and retains original order`() = runBlocking {
+        val f = Fixture(); f.login(); f.api.official = true
+        val engine = f.engine(); engine.buy("coins", "main")
+        val key = engine.state.value.record!!.key
+        engine.claimOfficial(key)
+        engine.officialResult(key, cancelledOrUnavailable = true)
+        assertFalse(engine.state.value.record!!.canChangeProductAfterCancellation)
+        engine.buy("other", "main")
+        assertEquals(1, f.orders)
+    }
+
+    @Test fun `SDK failure cannot relaunch Play or replace pending order before backend terminal result`() = runBlocking {
+        val f = Fixture(); f.login(); f.api.official = true
+        val engine = f.engine(); engine.buy("coins", "main")
+        val key = engine.state.value.record!!.key
+        engine.claimOfficial(key)
+        engine.officialResult(key, cancelledOrUnavailable = false, failed = true)
+        assertEquals(PaymentStage.OFFICIAL_LAUNCHED, engine.state.value.record!!.stage)
+        assertNull(engine.claimOfficial(key))
+        engine.buy("other", "main")
+        assertEquals(1, f.orders)
+        assertEquals(key, engine.state.value.record!!.key)
+        f.api.status = "failed"
+        engine.retry(key)
+        assertEquals(PaymentStage.FAILED, engine.state.value.record!!.stage)
+        engine.buy("other", "main")
+        assertEquals(2, f.orders)
+    }
+    @Test fun `local official SDK failure reconciles original order instead of releasing it`() = runBlocking {
+        val f = Fixture(); f.login(); f.api.official = true
+        val engine = f.engine(); engine.buy("coins", "main")
+        val key = engine.state.value.record!!.key
+        assertNotNull(engine.claimOfficial(key))
+        f.api.queryFailure = true
+        engine.officialResult(key, cancelledOrUnavailable = false, failed = true)
+        assertTrue(engine.state.value.record!!.unresolved)
+        assertEquals(key, engine.state.value.record!!.key)
+        assertEquals(1, f.orders)
+        assertNull(engine.claimOfficial(key))
+        f.api.queryFailure = false; f.api.status = "paid"; f.api.fulfillment = "fulfilled"
+        engine.retry(key)
+        assertEquals(PaymentStage.SUCCESS, engine.state.value.record!!.stage)
+        assertEquals(1, f.orders)
+    }
     @Test fun `lost create response restores durable intent and retries original product`() = runBlocking {
         val f = Fixture(); f.login(); f.createFailure = true
         var engine = f.engine(); engine.buy("coins", "main")

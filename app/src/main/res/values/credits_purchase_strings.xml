@@ -1,0 +1,15 @@
+<resources>
+    <string name="credits_title">Elora Tokens</string>
+    <string name="credits_styles">✦  Unlock more AI styles</string>
+    <string name="credits_speed">ϟ  Speed up generation</string>
+    <string name="credits_back">Back from recharge</string>
+    <string name="credits_history">Wallet history</string>
+    <string name="credits_purchase">Purchase</string>
+    <string name="credits_subscribe">Subscribe</string>
+    <string name="credits_discount">%1$d%% OFF</string>
+    <string name="credits_bonus">+%1$d bonus</string>
+    <string name="credits_empty_history">No wallet activity to display.</string>
+    <string name="credits_wallet_activity">Recent wallet activity</string>
+    <string name="credits_wallet_transaction">Wallet transaction</string>
+    <string name="credits_check_payment">Check payment</string>
+</resources>

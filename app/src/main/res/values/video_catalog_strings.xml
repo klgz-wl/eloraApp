@@ -1,0 +1,23 @@
+<resources>
+    <string name="video_catalog_title">Video templates</string>
+    <string name="video_catalog_membership">Elora membership</string>
+    <string name="video_catalog_balance">Balance: %1$d diamonds</string>
+    <string name="video_catalog_trending">Trending</string>
+    <string name="video_catalog_video">Video</string>
+    <string name="video_catalog_duration">%1$dS</string>
+    <string name="video_catalog_hot_badge">HOT!</string>
+    <string name="video_catalog_retry">Retry</string>
+    <string name="video_catalog_more">Load more</string>
+    <string name="image_catalog_title">Image templates</string>
+    <string name="image_catalog_image">Image</string>
+    <string name="nav_home">HOME</string>
+    <string name="home_label">Home</string>
+    <string name="home_title">Trending Templates</string>
+    <string name="home_swipe_hint">Swipe vertically to explore visual styles</string>
+    <string name="home_studio">AI Studio</string>
+    <string name="home_use_template">Use %1$s template</string>
+    <string name="home_upload_hint">Upload photos to start making</string>
+    <string name="catalog_all">All</string>
+    <string name="catalog_loading_description">Loading templates</string>
+    <string name="home_open_template">Open %1$s template</string>
+</resources>

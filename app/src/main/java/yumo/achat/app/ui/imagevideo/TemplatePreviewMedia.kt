@@ -4,7 +4,7 @@ import yumo.achat.core.backend.VisualTemplate
 import androidx.compose.ui.layout.ContentScale
 import coil.size.Scale
 
-internal sealed interface TemplatePreviewMedia {
+internal sealed interface TemplatePreviewMedia : java.io.Serializable {
     data object LocalPlaceholder : TemplatePreviewMedia
     data object Unavailable : TemplatePreviewMedia
     data class RemoteImage(val url: String) : TemplatePreviewMedia

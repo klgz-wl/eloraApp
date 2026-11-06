@@ -13,6 +13,25 @@ import yumo.achat.core.payment.PaymentStage
 import yumo.achat.core.payment.PaymentViewState
 
 class TopUpPaymentRecoveryPresentationTest {
+    @Test fun `explicit cancellation releases package selection and new purchase`() {
+        val original = payment(PaymentStage.CLOSED, null)
+        val cancelled = original.copy(record = original.record!!.copy(userCancelled = true))
+        assertFalse(corePaymentPresentation(cancelled).locksProductSelection)
+        assertTrue(corePaymentPresentation(cancelled).canStartPurchase)
+        assertFalse(corePaymentPresentation(cancelled).canRetry)
+        val uncertain = cancelled.copy(record = cancelled.record!!.copy(error = "network_error"))
+        assertTrue(corePaymentPresentation(uncertain).locksProductSelection)
+        assertFalse(corePaymentPresentation(uncertain).canStartPurchase)
+    }
+
+    @Test fun `local SDK failure with pending backend order remains under confirmation`() {
+        val original = payment(PaymentStage.OFFICIAL_LAUNCHED, null)
+        val official = original.copy(record = original.record!!.copy(initialized =
+            InitializedPayment("order", "official", "google", "sdk")))
+        val result = official.toTopUpCheckoutState(CoinPurchaseState(epoch = "epoch", status = CoinPurchaseStatus.FAILED))
+        assertTrue(result is TopUpCheckoutState.AwaitingPayment)
+        assertFalse(corePaymentPresentation(official).canStartPurchase)
+    }
     @Test fun `store cancellation carries different diagnostic evidence from closing checkout`() {
         val closed = payment(PaymentStage.CLOSED, null).toTopUpCheckoutState(CoinPurchaseState())
         val original = payment(PaymentStage.OFFICIAL_LAUNCHED, null)

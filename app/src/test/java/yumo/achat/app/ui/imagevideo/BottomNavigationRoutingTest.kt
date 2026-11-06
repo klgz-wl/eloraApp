@@ -6,7 +6,7 @@ import org.junit.Test
 class BottomNavigationRoutingTest {
     @Test
     fun `every bottom navigation item returns to the root container`() {
-        (0..3).forEach { navigationIndex ->
+        (0..4).forEach { navigationIndex ->
             val route = routeFromBottomNavigation(navigationIndex)
 
             assertEquals(navigationIndex, route.selectedNavigation)
@@ -70,15 +70,10 @@ class BottomNavigationRoutingTest {
     }
 
     @Test
-    fun `successful generation task routes to my tasks`() {
-        val route = routeAfterGenerationTaskCreated(selectedNavigation = 1)
-
-        assertEquals(
-            BottomNavigationRoute(
-                selectedNavigation = 1,
-                destination = ImageToVideoDestination.MyTasks,
-            ),
-            route,
-        )
+    fun `successful generation task returns home from every navigation source`() {
+        (0..4).forEach { source ->
+            assertEquals(BottomNavigationRoute(4, ImageToVideoDestination.Templates),
+                routeAfterGenerationTaskCreated(selectedNavigation = source))
+        }
     }
 }

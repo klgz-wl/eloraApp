@@ -10,11 +10,17 @@ import yumo.achat.core.backend.VisualTemplate
 
 class TemplateRetryStateTest {
     @Test
-    fun `template tabs map to backend sort values`() {
-        assertEquals("hot", templateSortBy(TemplateSection.Video, selectedTab = 0))
-        assertEquals("latest", templateSortBy(TemplateSection.Video, selectedTab = 1))
-        assertEquals("latest", templateSortBy(TemplateSection.Image, selectedTab = 0))
-        assertEquals("latest", templateSortBy(TemplateSection.Image, selectedTab = 1))
+    fun `backend categories keep modality sort and home flag`() {
+        assertEquals("hot", templateSortBy(TemplateSection.Video, 0))
+        assertEquals("hot", templateSortBy(TemplateSection.Video, 1))
+        assertEquals("latest", templateSortBy(TemplateSection.Image, 0))
+        assertEquals("latest", templateSortBy(TemplateSection.Image, 1))
+        assertEquals(true, templateHomeFeatured(TemplateSection.Video, 4))
+        assertEquals(false, templateHomeFeatured(TemplateSection.Video, 0))
+        assertNull(templateHomeFeatured(TemplateSection.Image, 1))
+        assertTrue(templateCatalogNeedsStartupReload(TemplateSection.Video, 0))
+        assertTrue(templateCatalogNeedsStartupReload(TemplateSection.Image, 1))
+        assertFalse(templateCatalogNeedsStartupReload(TemplateSection.Image, 0))
     }
 
     @Test

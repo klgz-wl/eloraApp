@@ -30,8 +30,28 @@ internal fun shouldRouteGenerationErrorToTopUp(rawMessage: String?): Boolean {
         message.contains("balance")
 }
 
+internal const val GenerationTopUpNoticeDurationMillis = 2_000L
+
+internal suspend fun awaitGenerationTopUpRoute(onTopUp: () -> Unit) {
+    kotlinx.coroutines.delay(GenerationTopUpNoticeDurationMillis)
+    onTopUp()
+}
+
 internal fun generationTopUpRouteDelayMillis(rawMessage: String?): Long? =
-    if (shouldRouteGenerationErrorToTopUp(rawMessage)) 1_200L else null
+    if (shouldRouteGenerationErrorToTopUp(rawMessage)) GenerationTopUpNoticeDurationMillis else null
+
+internal fun shouldRouteGenerationErrorToTopUp(error: Throwable): Boolean {
+    val rejection = error as? yumo.achat.core.backend.GenerationCreationRejectedException
+        ?: error.cause as? yumo.achat.core.backend.GenerationCreationRejectedException
+    if (rejection?.backendCode in setOf(400101, 402)) return true
+    if (error is yumo.achat.core.visual.GenerationException && error.reason == yumo.achat.core.visual.GenerationFailure.INSUFFICIENT) return true
+    return shouldRouteGenerationErrorToTopUp(error.message)
+}
+
+internal fun generationTopUpRouteDelayMillis(error: Throwable): Long? =
+    if (shouldRouteGenerationErrorToTopUp(error)) GenerationTopUpNoticeDurationMillis else null
+
+internal fun generationNeedsTopUp(quotedCost: Int, balance: Int): Boolean = quotedCost >= 0 && quotedCost > balance
 
 internal fun apiEnvelopeUserMessage(rawMessage: String?, fallback: String): String {
     val message = rawMessage?.trim().orEmpty()

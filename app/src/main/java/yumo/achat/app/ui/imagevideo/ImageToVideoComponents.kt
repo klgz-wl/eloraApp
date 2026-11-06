@@ -256,7 +256,7 @@ private fun TemplateSwipeGestureLayer(
 
 @Composable
 @OptIn(UnstableApi::class)
-private fun TemplatePreviewImage(
+internal fun TemplatePreviewImage(
     media: TemplatePreviewMedia,
     isPlaying: Boolean,
     contentDescription: String?,
@@ -488,7 +488,7 @@ private fun TemplateMediaLoadingIndicator(modifier: Modifier = Modifier) {
 
 @Composable
 @OptIn(UnstableApi::class)
-private fun TemplatePreviewVideo(
+internal fun TemplatePreviewVideo(
     url: String,
     isPlaying: Boolean,
     resizeMode: Int = AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
@@ -1153,22 +1153,7 @@ private fun PhotoGlyph(modifier: Modifier = Modifier) {
 
 @Composable
 internal fun BottomNavigation(selectedIndex: Int, onSelect: (Int) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 66.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xD9080A13))
-            .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceAround,
-    ) {
-        NavItem(stringResource(R.string.nav_video), NavIcon.Video, selectedIndex == 0) { onSelect(0) }
-        NavItem(stringResource(R.string.nav_image), NavIcon.Image, selectedIndex == 1) { onSelect(1) }
-        NavItem(stringResource(R.string.nav_top_up), NavIcon.Diamond, selectedIndex == 2) { onSelect(2) }
-        NavItem(stringResource(R.string.nav_me), NavIcon.Person, selectedIndex == 3) { onSelect(3) }
-    }
+    CatalogNavigation(selectedIndex, onSelect)
 }
 
 private enum class NavIcon { Video, Image, Diamond, Person }

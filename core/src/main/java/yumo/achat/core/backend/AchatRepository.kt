@@ -79,7 +79,7 @@ class AchatRepository(
             }
             val videoTemplates = async {
                 loadTemplateResult("Unable to load video templates") {
-                    sessionManager.authenticated { token -> client.templates(token, "video", sortBy = "hot") }
+                    sessionManager.authenticated { token -> client.templates(token, "video", sortBy = "hot", homeFeatured = true) }
                 }
             }
             val imageTemplates = async {
@@ -126,6 +126,7 @@ class AchatRepository(
         categoryId: String? = null,
         page: Int = 1,
         pageSize: Int = 20,
+        homeFeatured: Boolean? = null,
     ): TemplateLoadResult = withContext(Dispatchers.IO) {
         require(modality == "video" || modality == "image") { "Unsupported template modality" }
         loadTemplateResult("Unable to load $modality templates") {
@@ -137,6 +138,7 @@ class AchatRepository(
                     categoryId = categoryId,
                     page = page,
                     pageSize = pageSize,
+                    homeFeatured = if (modality == "video") homeFeatured ?: false else null,
                 )
             }
         }
@@ -257,13 +259,14 @@ class AchatRepository(
         }
     }
 
-    suspend fun generatedResources(page: Int = 1, pageSize: Int = 20): PagedResult<VisualResource> = withContext(Dispatchers.IO) {
+    suspend fun generatedResources(page: Int = 1, pageSize: Int = 20, modality: String? = null): PagedResult<VisualResource> = withContext(Dispatchers.IO) {
         sessionManager.authenticated { token ->
             client.visualResources(
                 token = token,
                 page = page,
                 pageSize = pageSize,
                 resourceType = "generated",
+                modality = modality,
             )
         }
     }

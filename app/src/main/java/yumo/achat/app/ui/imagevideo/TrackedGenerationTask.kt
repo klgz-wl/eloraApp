@@ -25,7 +25,7 @@ internal data class TrackedGenerationTask(
     val diamondCost: Int = 0,
     val source: String = "",
     val viewed: Boolean = false,
-) {
+) : java.io.Serializable {
     val isFinished: Boolean
         get() = isVisualGenerationFinished(status)
 

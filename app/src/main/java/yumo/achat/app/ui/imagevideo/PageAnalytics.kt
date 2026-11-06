@@ -18,11 +18,13 @@ internal fun analyticsPageName(
         1 -> "image"
         2 -> "purchase"
         3 -> "profile"
+        4 -> "home"
         else -> null
     }
     ImageToVideoDestination.UploadPhoto -> "generation"
     ImageToVideoDestination.MyTasks -> if (hasSelectedResult) "media" else "records"
     ImageToVideoDestination.EditName -> "settings"
+    ImageToVideoDestination.WalletRecords -> "records"
     ImageToVideoDestination.Feedback -> null
 }
 

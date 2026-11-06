@@ -1,0 +1,16 @@
+<resources>
+    <string name="me_settings">Settings</string>
+    <string name="me_settings_back">Back to Me</string>
+    <string name="me_credits_left">%1$d Credits Left</string>
+    <string name="me_purchase_credits">Purchase Credits</string>
+    <string name="me_creations">Creations</string>
+    <string name="me_videos">Videos</string>
+    <string name="me_images">Images</string>
+    <string name="me_no_creations">No Creations yet.</string>
+    <string name="me_create_now">Create Now</string>
+    <string name="me_open_creation">Open creation: %1$s</string>
+    <string name="me_motion">MOTION</string>
+    <string name="me_retention_label">Auto-deletion enabled:</string>
+    <string name="me_retention_duration">72 hours</string>
+    <string name="me_retention_notice">%1$s AI generated items auto-delete after %2$s for privacy. Download items to retain permanent access!</string>
+</resources>

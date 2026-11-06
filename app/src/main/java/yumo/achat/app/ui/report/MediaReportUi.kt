@@ -1,17 +1,23 @@
 package yumo.achat.app.ui.report
 
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
@@ -28,12 +34,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -43,10 +48,13 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import yumo.achat.app.R
-import yumo.achat.app.ui.theme.AchatCyan
-import yumo.achat.app.ui.theme.AchatPink
+import yumo.achat.app.ui.theme.EloraReportSurface
+import yumo.achat.app.ui.theme.EloraReportButtonStart
+import yumo.achat.app.ui.theme.EloraReportButtonMiddle
+import yumo.achat.app.ui.theme.EloraReportButtonEnd
+import yumo.achat.app.ui.theme.EloraWelcomeError
 
-/** Place this in a Box aligned to the preview's bottom end. Its touch target is 44 dp. */
+/** Shared information glyph that opens the report confirmation. */
 @Composable
 fun MediaReportIconButton(
     onClick: () -> Unit,
@@ -54,24 +62,14 @@ fun MediaReportIconButton(
 ) {
     val label = stringResource(R.string.report_content_description)
     Box(
-        modifier = modifier
-            .size(44.dp)
+        modifier = modifier.size(48.dp).clip(CircleShape)
+            .background(Color.Black.copy(alpha = .55f))
+            .border(1.dp, Color.White.copy(alpha = .15f), CircleShape)
             .semantics { contentDescription = label }
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(Modifier.size(29.dp)) {
-            val radius = size.minDimension / 2f - 1.dp.toPx()
-            drawCircle(AchatCyan, radius = radius, style = Stroke(width = 1.5.dp.toPx()))
-            drawLine(
-                AchatCyan,
-                start = Offset(center.x, center.y - 7.dp.toPx()),
-                end = Offset(center.x, center.y + 2.dp.toPx()),
-                strokeWidth = 2.dp.toPx(),
-                cap = StrokeCap.Round,
-            )
-            drawCircle(AchatCyan, radius = 1.2.dp.toPx(), center = Offset(center.x, center.y + 7.dp.toPx()))
-        }
+        Image(painterResource(R.drawable.elora_preview_info), null, Modifier.size(16.dp))
     }
 }
 
@@ -100,67 +98,65 @@ fun MediaReportSheet(
     ModalBottomSheet(
         onDismissRequest = close,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = Color(0xFF1B1135),
+        containerColor = EloraReportSurface,
         contentColor = Color.White,
-        scrimColor = Color.Black.copy(alpha = 0.72f),
-        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+        scrimColor = Color.Black.copy(alpha = 0.45f),
+        shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
         dragHandle = {
             Box(
-                Modifier.padding(top = 10.dp, bottom = 9.dp)
-                    .size(width = 39.dp, height = 3.dp)
+                Modifier.padding(top = 16.dp, bottom = 8.dp)
+                    .size(width = 40.dp, height = 4.dp)
                     .clip(RoundedCornerShape(100.dp))
-                    .background(Color.White.copy(alpha = 0.85f)),
+                    .background(Color.White.copy(alpha = 0.2f)),
             )
         },
         modifier = modifier,
     ) {
         Column(
-            Modifier.fillMaxWidth().height(400.dp).padding(horizontal = 28.dp).padding(bottom = 28.dp),
+            Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp).padding(bottom = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
         ) {
-            Spacer(Modifier.height(22.dp))
+            Box(Modifier.fillMaxWidth().height(48.dp)) {
+                val closeDescription = stringResource(R.string.report_close)
+                Box(Modifier.align(Alignment.CenterEnd).size(48.dp).clickable(role = Role.Button, onClick = close)
+                    .semantics { contentDescription = closeDescription }, contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(32.dp).clip(CircleShape).background(Color.White.copy(alpha = .05f))
+                        .border(1.dp, Color.White.copy(alpha = .1f), CircleShape), contentAlignment = Alignment.Center) {
+                        Image(painterResource(R.drawable.elora_report_close), null, Modifier.size(16.dp))
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
             Text(
                 text = stringResource(R.string.report_explanation),
-                color = Color.White,
-                fontSize = 16.sp,
-                lineHeight = 19.sp,
-                textAlign = TextAlign.Center,
+                color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                lineHeight = 28.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 8.dp),
             )
             if (submissionState == ReportSubmissionState.Failure) {
                 Spacer(Modifier.height(9.dp))
-                Text(
-                    text = stringResource(R.string.report_failed),
-                    color = Color(0xFFFFB4CA),
-                    fontSize = 13.sp,
-                    textAlign = TextAlign.Center,
-                )
+                Text(stringResource(R.string.report_failed), color = EloraWelcomeError, fontSize = 13.sp, textAlign = TextAlign.Center)
             }
-            Spacer(Modifier.weight(1f))
-            Box(
-                Modifier.fillMaxWidth()
-                    .height(50.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Brush.horizontalGradient(listOf(AchatCyan, Color(0xFF6C4BEA), AchatPink)))
-                    .clickable(
-                        enabled = submissionState != ReportSubmissionState.Submitting,
-                        role = Role.Button,
-                    ) {
+            Spacer(Modifier.height(28.dp))
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(CircleShape)
+                    .background(Brush.horizontalGradient(listOf(EloraReportButtonStart, EloraReportButtonMiddle, EloraReportButtonEnd)))
+                    .border(1.dp, Color.White.copy(alpha = .25f), CircleShape)
+                    .clickable(enabled = submissionState != ReportSubmissionState.Submitting, role = Role.Button) {
                         submissionJob = scope.launch {
                             if (controller.submit(MediaReport(mediaId))) onSuccess()
                         }
                     }
-                    .semantics {
-                        if (submissionState == ReportSubmissionState.Submitting) {
-                            contentDescription = submittingLabel
-                        }
-                    },
-                contentAlignment = Alignment.Center,
+                    .semantics { if (submissionState == ReportSubmissionState.Submitting) contentDescription = submittingLabel }
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center,
             ) {
                 if (submissionState == ReportSubmissionState.Submitting) {
-                    CircularProgressIndicator(Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
+                    CircularProgressIndicator(Modifier.size(24.dp), color = Color.White, strokeWidth = 2.dp)
                 } else {
-                    Text(stringResource(R.string.report_submit), color = Color.White, fontSize = 15.sp)
+                    Image(painterResource(R.drawable.elora_report_flag), null, Modifier.size(16.dp))
+                    Spacer(Modifier.size(8.dp))
+                    Text(stringResource(R.string.report_submit), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }

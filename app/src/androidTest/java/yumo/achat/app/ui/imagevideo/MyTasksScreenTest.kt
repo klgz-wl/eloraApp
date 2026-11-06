@@ -106,19 +106,22 @@ class MyTasksScreenTest {
         }
 
         composeRule.onNodeWithText("Video result").assertIsDisplayed()
-        composeRule.onNodeWithText("Result file unavailable, pull to refresh or try later.").assertIsDisplayed()
+        composeRule.onNodeWithText("Result file unavailable, pull to refresh or try later.", substring = true).assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Report content").assertIsDisplayed().performClick()
         composeRule.onNodeWithText("Feel free to report this content if you think it’s inappropriate.").assertIsDisplayed()
     }
 
     @Test
     fun generationResultScreenShowsUnavailableMessageWhenVideoPlaybackFails() {
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        val localVideo = java.io.File(instrumentation.targetContext.cacheDir, "my-tasks-retry.mp4")
+        instrumentation.context.assets.open("elora-viewer/pattern.mp4").use { input -> localVideo.outputStream().use(input::copyTo) }
         val task = TrackedGenerationTask(
             taskId = "task-video-404",
             title = "Missing video result",
             modality = "video",
             status = "succeeded",
-            resultUrl = "https://cdn.appjoly.com/missing.mp4",
+            resultUrl = localVideo.toURI().toString(),
             mimeType = "video/mp4",
             errorMessage = null,
         )
@@ -133,7 +136,7 @@ class MyTasksScreenTest {
             }
         }
 
-        composeRule.onNodeWithText("Result file unavailable, pull to refresh or try later.").assertIsDisplayed()
+        composeRule.onNodeWithText("Result file unavailable, pull to refresh or try later.", substring = true).assertIsDisplayed()
         composeRule.onNodeWithText("RETRY").assertIsDisplayed().performClick()
         composeRule.onNodeWithContentDescription("Video progress").assertIsDisplayed()
     }

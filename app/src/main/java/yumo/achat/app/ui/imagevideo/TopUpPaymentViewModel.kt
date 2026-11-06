@@ -62,6 +62,12 @@ internal fun fulfilledBillingPurchaseEpoch(
         )
 }
 
+internal fun preferredTopUpProductId(products: List<StoreProduct>): String? =
+    products.firstOrNull { product ->
+        val tags = product.tags.lowercase(java.util.Locale.ROOT)
+        tags.contains("best value") || tags.contains("best_value") || tags.contains("recommended")
+    }?.id ?: products.firstOrNull()?.id
+
 @HiltViewModel
 internal class TopUpPaymentViewModel @Inject constructor(
     private val payments: PaymentCoordinator,
@@ -140,8 +146,16 @@ internal class CoreTopUpPaymentController(
 
     private var products: Map<String, StoreProduct> = emptyMap()
     private var userInfo: StoreUserInfo? = null
-    private var coreState: PaymentViewState = PaymentViewState()
-    private var purchaseState: CoinPurchaseState = CoinPurchaseState()
+    private var coreState by mutableStateOf(PaymentViewState())
+    private var purchaseState by mutableStateOf(CoinPurchaseState())
+    var preparingPayment by mutableStateOf(false)
+        private set
+    val canRetryPayment: Boolean
+        get() = !preparingPayment && corePaymentPresentation(coreState).canRetry
+    val canStartPayment: Boolean
+        get() = !preparingPayment && corePaymentPresentation(coreState).canStartPurchase &&
+            !blocksTopUpPurchase(purchaseState, coreState, sessions.current?.userId)
+
     private var lastSuccessKey: String? = null
     private val thirdPartyLaunchGate = ThirdPartyLaunchGate()
     private val browserReturn = BrowserReturnController()
@@ -158,7 +172,7 @@ internal class CoreTopUpPaymentController(
                 }
                 productSelectionLocked = corePaymentPresentation(next).locksProductSelection ||
                     blocksTopUpPurchase(purchaseState, next, sessions.current?.userId)
-                next.record?.productId?.let { selectedProductId = it }
+                next.record?.takeUnless { it.canChangeProductAfterCancellation }?.productId?.let { selectedProductId = it }
                 state = next.toTopUpPurchaseState()
                 checkoutState = next.toTopUpCheckoutState(purchaseState)
                 val successKey = next.record?.takeIf { it.stage == PaymentStage.SUCCESS }?.key
@@ -201,27 +215,33 @@ internal class CoreTopUpPaymentController(
     fun retainAvailableProducts(products: List<StoreProduct>, userInfo: StoreUserInfo? = null) {
         this.products = products.associateBy(StoreProduct::id)
         this.userInfo = userInfo
-        val activeProduct = coreState.record?.takeIf { it.unresolved }?.productId
-        selectedProductId = activeProduct ?: selectedProductId?.takeIf(this.products::containsKey) ?: products.firstOrNull()?.id
+        val activeProduct = coreState.record?.takeIf { it.unresolved && !it.canChangeProductAfterCancellation }?.productId
+        selectedProductId = activeProduct ?: selectedProductId?.takeIf(this.products::containsKey) ?: preferredTopUpProductId(products)
     }
 
     fun selectProduct(productId: String?) {
-        if (productSelectionLocked) return
+        if (productSelectionLocked || preparingPayment) return
         selectedProductId = productId?.takeIf(products::containsKey)
     }
 
     fun prepare(activity: Activity, entrySource: String = "main") {
+        if (preparingPayment) return
+        preparingPayment = true
+        val requestedProduct = selectedProductId?.let(products::get)
+        val requestedUserInfo = userInfo
         scope.launch {
-            sessions.synchronize()
-            val record = coreState.record
-            if (record != null && corePaymentPresentation(coreState).canRetry) {
-                payments.retry(record.key)
-                return@launch
-            }
-            if (blocksTopUpPurchase(purchaseState, coreState, sessions.current?.userId)) return@launch
-            if (!corePaymentPresentation(coreState).canStartPurchase) return@launch
-            val product = selectedProductId?.let(products::get) ?: return@launch
-            router.buy(activity, product.toCoinProduct(userInfo), entrySource)
+            try {
+                sessions.synchronize()
+                val record = coreState.record
+                if (record != null && corePaymentPresentation(coreState).canRetry) {
+                    payments.retry(record.key)
+                    return@launch
+                }
+                if (blocksTopUpPurchase(purchaseState, coreState, sessions.current?.userId)) return@launch
+                if (!corePaymentPresentation(coreState).canStartPurchase) return@launch
+                val product = requestedProduct ?: return@launch
+                router.buy(activity, product.toCoinProduct(requestedUserInfo), entrySource)
+            } finally { preparingPayment = false }
         }
     }
 
@@ -235,7 +255,7 @@ internal class CoreTopUpPaymentController(
     }
 
     fun onHostPaused() = browserReturn.paused()
-    fun onHostResumed() { browserReturn.resumed(sessions.current?.epoch)?.let(payments::close) }
+    fun onHostResumed() { browserReturn.resumed(sessions.current?.epoch)?.let { payments.close(it) } }
 
     fun openThirdParty(route: TopUpPurchaseState.ThirdPartyReady) = payments.opened(route.record.key)
     fun onThirdPartyPageLoaded(route: TopUpPurchaseState.ThirdPartyReady, url: String?, htmlExcerpt: String?) =
@@ -262,7 +282,7 @@ internal class CoreTopUpPaymentController(
                 "page_load_error",
                 PaymentClientEventDetails(errorMessage = message.takeIf(String::isNotBlank)),
             )
-            if (record.thirdParty) payments.close(record.key)
+            if (record.thirdParty) payments.close(record.key, userCancelled = false)
         }
     }
 
@@ -367,7 +387,7 @@ internal fun PaymentViewState.toTopUpCheckoutState(purchase: CoinPurchaseState):
             CoinPurchaseStatus.PENDING -> return TopUpCheckoutState.AwaitingPayment(true)
             CoinPurchaseStatus.AWAITING_FULFILLMENT -> return TopUpCheckoutState.AwaitingPayment(false)
             CoinPurchaseStatus.CANCELLED -> return TopUpCheckoutState.UserCancelled
-            CoinPurchaseStatus.FAILED -> return TopUpCheckoutState.Failed("", retryPreparedRoute = true, messageRes = R.string.top_up_payment_failed)
+            CoinPurchaseStatus.FAILED -> return TopUpCheckoutState.AwaitingPayment(false)
             else -> Unit
         }
     }

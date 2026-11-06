@@ -3,8 +3,37 @@ package yumo.achat.app.ui.imagevideo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
+import kotlinx.coroutines.launch
 
 class UploadUserMessageTest {
+    @Test fun `recharge waits for notice and cancellation never navigates`() = kotlinx.coroutines.runBlocking {
+        var routes = 0
+        val started = System.nanoTime()
+        val pending = launch {
+            awaitGenerationTopUpRoute { routes++ }
+        }
+        kotlinx.coroutines.delay(100)
+        assertEquals(0, routes)
+        pending.join()
+        assertEquals(1, routes)
+        org.junit.Assert.assertTrue((System.nanoTime() - started) / 1_000_000 >= 2_000)
+        val cancelled = launch { awaitGenerationTopUpRoute { routes++ } }
+        kotlinx.coroutines.delay(100)
+        cancelled.cancel()
+        cancelled.join()
+        assertEquals(1, routes)
+    }
+
+    @Test fun `local quote and typed backend insufficient balance route to recharge`() {
+        org.junit.Assert.assertTrue(generationNeedsTopUp(7, 2))
+        org.junit.Assert.assertFalse(generationNeedsTopUp(2, 2))
+        org.junit.Assert.assertFalse(generationNeedsTopUp(-1, 0))
+        org.junit.Assert.assertTrue(shouldRouteGenerationErrorToTopUp(
+            yumo.achat.core.backend.GenerationCreationRejectedException(400101, "Insufficient diamonds")))
+        org.junit.Assert.assertFalse(shouldRouteGenerationErrorToTopUp(java.io.IOException("connection failed")))
+        assertEquals(2000L, generationTopUpRouteDelayMillis(
+            yumo.achat.core.backend.GenerationCreationRejectedException(402, "Insufficient credits")))
+    }
     @Test
     fun `typed technical failures use localized fallback instead of raw messages`() {
         val fallback = "Upload failed"
@@ -18,7 +47,7 @@ class UploadUserMessageTest {
     fun `irrelevant envelope metadata cannot change generation balance routing`() {
         val raw = """{"code":400101,"message":"Insufficient diamond balance","trace":"https://internal.example/${"x".repeat(1024)}"}"""
         assertEquals("Insufficient diamond balance", visualGenerationUserMessage(raw, "Upload failed"))
-        assertEquals(1200L, generationTopUpRouteDelayMillis(raw))
+        assertEquals(2000L, generationTopUpRouteDelayMillis(raw))
     }
 
     @Test
@@ -128,7 +157,7 @@ class UploadUserMessageTest {
     @Test
     fun `insufficient balance top up route is delayed so the message is visible`() {
         assertEquals(
-            1200L,
+            2000L,
             generationTopUpRouteDelayMillis(
                 """{"code":400101,"message":"Insufficient diamond balance","trace":"secret"}""",
             ),

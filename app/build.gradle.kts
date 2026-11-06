@@ -39,10 +39,10 @@ val flavorEndpoints = mapOf(
         "REGION_LOOKUP_URL" to "https://api.country.is/",
     ),
     "prod" to mapOf(
-        "CORE_BASE_URL" to "https://release.zorv.date/api/v1/",
-        "PAYMENT_BASE_URL" to "https://release.zorv.date/payment-api/v1/",
-        "CORE_STREAM_URL" to "wss://release.zorv.date",
-        "CORE_CDN_URL" to "https://cdn.zorv.date",
+        "CORE_BASE_URL" to "https://release.eloraapp.loan/api/v1/",
+        "PAYMENT_BASE_URL" to "https://release.eloraapp.loan/payment-api/v1/",
+        "CORE_STREAM_URL" to "wss://release.eloraapp.loan",
+        "CORE_CDN_URL" to "https://cdn.eloraapp.loan",
         "REGION_LOOKUP_URL" to "https://api.country.is/",
     ),
 )
@@ -67,6 +67,22 @@ val flavorConfigurations = listOf("dev", "prod").associateWith { env ->
         flavorEndpoints.getValue(endpointKey).forEach { (key, value) ->
             setProperty("build.string.$key", value)
         }
+    }
+}
+
+// The retained prod google-services.json belongs to the previous application. Do not
+// re-label its immutable Firebase app ID. Process it only when Firebase is enabled.
+val prodFirebaseEnabled = listOf("ENABLE_FIREBASE_ANALYTICS", "ENABLE_FIREBASE_CRASHLYTICS", "ENABLE_FIREBASE_MESSAGING")
+    .any { flavorConfigurations.getValue("prod").getProperty("build.boolean.$it").toBoolean() }
+val clearDisabledProdGoogleServices = tasks.register<Delete>("clearDisabledProdGoogleServices") {
+    // Google Services 4.4.4 generates resources under generated/res/<task-name>.
+    delete(layout.buildDirectory.dir("generated/res/processProdDebugGoogleServices"))
+    delete(layout.buildDirectory.dir("generated/res/processProdReleaseGoogleServices"))
+}
+tasks.matching { it.name in setOf("processProdDebugGoogleServices", "processProdReleaseGoogleServices") }.configureEach {
+    if (!prodFirebaseEnabled) {
+        enabled = false
+        dependsOn(clearDisabledProdGoogleServices)
     }
 }
 
@@ -255,8 +271,8 @@ tasks.register("verifyFormalRelease") {
         check(prodConfirmationProperties.getProperty("confirmed") == "true") {
             "请填写正式配置确认清单：config/prod-confirmation.local.properties"
         }
-        check(flavorApplicationIds.getValue("prod") == "com.zorv.app") {
-            "必须确认正式包名 com.zorv.app"
+        check(flavorApplicationIds.getValue("prod") == "com.elorattt.app") {
+            "必须确认正式包名 com.elorattt.app"
         }
         val formalCertificate = signingCertificate(formalSigningProperties, "formal release")
         val formalStoreFile = rootProject.file(formalSigningProperties.getProperty("storeFile"))
@@ -301,7 +317,7 @@ tasks.register("verifyCoreFullChainEvidence") {
         }
         @Suppress("UNCHECKED_CAST")
         val value = JsonSlurper().parse(evidence) as Map<String, Any?>
-        check(value["package_name"] == "com.zorv.app") { "真实平台验收证据包名不匹配" }
+        check(value["package_name"] == "com.elorattt.app") { "真实平台验收证据包名不匹配" }
         check(value["backend_environment"] == "release") { "真实平台验收证据后端环境不匹配" }
         check((value["distribution"] as? String).orEmpty().isNotBlank()) { "真实平台验收证据缺少distribution" }
         check((value["device"] as? String).orEmpty().isNotBlank()) { "真实平台验收证据缺少device" }
@@ -336,15 +352,15 @@ tasks.register("verifyProdReleaseRuntimeConfig") {
     doLast {
         val text = buildConfig.get().asFile.readText()
         val expected = mapOf(
-            "APPLICATION_ID" to "com.zorv.app",
+            "APPLICATION_ID" to "com.elorattt.app",
             "ACHAT_CLIENT_VERSION" to flavorConfigurations.getValue("prod").getProperty("app.version.name"),
             "VERSION_NAME" to flavorConfigurations.getValue("prod").getProperty("app.version.name"),
-            "ACHAT_API_BASE_URL" to "https://release.zorv.date",
-            "ACHAT_WS_URL" to "wss://release.zorv.date/connection/websocket",
-            "CORE_BASE_URL" to "https://release.zorv.date/api/v1/",
-            "CORE_STREAM_URL" to "wss://release.zorv.date",
-            "PAYMENT_BASE_URL" to "https://release.zorv.date/payment-api/v1/",
-            "CORE_CDN_URL" to "https://cdn.zorv.date",
+            "ACHAT_API_BASE_URL" to "https://release.eloraapp.loan",
+            "ACHAT_WS_URL" to "wss://release.eloraapp.loan/connection/websocket",
+            "CORE_BASE_URL" to "https://release.eloraapp.loan/api/v1/",
+            "CORE_STREAM_URL" to "wss://release.eloraapp.loan",
+            "PAYMENT_BASE_URL" to "https://release.eloraapp.loan/payment-api/v1/",
+            "CORE_CDN_URL" to "https://cdn.eloraapp.loan",
             "PAYMENT_FLOW" to "SERVICE",
         )
         expected.forEach { (field, value) ->
@@ -374,7 +390,7 @@ tasks.register("verifyProdReleaseRuntimeConfig") {
         check(generatedBlockedRegionCodes == requiredBlockedRegionCodes) {
             "prodRelease blocked regions must be exactly $requiredBlockedRegionCodes"
         }
-        val requiredProdThinkingDataAppId = "T4s7v9z0p2k6d5r8m1g3hqxcn4bwyj"
+        val requiredProdThinkingDataAppId = "T4b0x6g2r9s7kdpq5v3n8jchwm1yzf"
         check("""TD_APP_ID = "$requiredProdThinkingDataAppId""" in text) {
             "prodRelease ThinkingData app ID must match the confirmed formal project"
         }

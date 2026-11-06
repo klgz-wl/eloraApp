@@ -111,7 +111,10 @@ class PaymentEngine @Inject constructor(private val storage: PaymentStorage, pri
         // 账号变化立即清空显示；等待旧请求退出后才读取所属账号记录。
         mutable.value = PaymentViewState()
         guarded { session ->
-            val saved = records.lastOrNull { it.userId == session.userId && ((it.stage == PaymentStage.SUCCESS && !it.successAcknowledged) || it.unresolved) }
+            val owned = records.filter { it.userId == session.userId }
+            val saved = owned.lastOrNull { it.unresolved && !it.canChangeProductAfterCancellation }
+                ?: owned.lastOrNull { it.stage == PaymentStage.SUCCESS && !it.successAcknowledged }
+                ?: owned.lastOrNull { it.unresolved }
             if (saved != null) {
                 val restored = when (saved.stage) {
                     PaymentStage.CREATING -> saved.copy(stage = PaymentStage.UNCERTAIN, error = "order_unknown")
@@ -130,7 +133,8 @@ class PaymentEngine @Inject constructor(private val storage: PaymentStorage, pri
             notifyFailure(session)
             return@guarded
         }
-        val old = records.lastOrNull { it.userId == session.userId && it.unresolved }
+        val old = records.lastOrNull { it.userId == session.userId && it.unresolved && !it.canChangeProductAfterCancellation }
+            ?: records.lastOrNull { it.userId == session.userId && it.unresolved && it.productId == productId }
         if (old != null) {
             if (old.recoveryRequired) save(old, session, false) else resume(old.copy(source = source), session)
             return@guarded
@@ -371,13 +375,13 @@ class PaymentEngine @Inject constructor(private val storage: PaymentStorage, pri
         if (publish && next.stage == PaymentStage.FAILED && record.stage != PaymentStage.FAILED) notifyFailure(session)
         return next
     }
-    suspend fun close(key: String) {
+    suspend fun close(key: String, userCancelled: Boolean = true) {
         dismissVisible(key, PaymentStage.CLOSED)
         guarded { session ->
             val record = current(key, session) ?: return@guarded
             if (record.thirdParty && record.unresolved && record.orderId != null) {
                 val closed = if (record.stage == PaymentStage.AWAITING_FULFILLMENT) record else
-                    record.copy(stage = if (record.expired(clock.now())) PaymentStage.TIMED_OUT else PaymentStage.CLOSED)
+                    record.copy(stage = if (record.expired(clock.now())) PaymentStage.TIMED_OUT else PaymentStage.CLOSED, userCancelled = userCancelled)
                 save(closed, session, false)
                 query(closed, session, closing = true)
             } else mutable.value = mutable.value.copy(checkoutVisible = false)
@@ -429,7 +433,7 @@ class PaymentEngine @Inject constructor(private val storage: PaymentStorage, pri
         }
         return result
     }
-    suspend fun officialResult(key: String, cancelledOrUnavailable: Boolean, consumed: Boolean = false, failed: Boolean = false): Boolean {
+    suspend fun officialResult(key: String, cancelledOrUnavailable: Boolean, consumed: Boolean = false, failed: Boolean = false, userCancelled: Boolean = false): Boolean {
         var fulfilled = false
         guarded { session ->
             val record = current(key, session) ?: return@guarded
@@ -446,14 +450,17 @@ class PaymentEngine @Inject constructor(private val storage: PaymentStorage, pri
             save(record.copy(
                 stage = when {
                     cancelledOrUnavailable -> PaymentStage.CLOSED
-                    failed -> PaymentStage.FAILED
+                    failed -> PaymentStage.UNCERTAIN
                     consumed -> PaymentStage.OFFICIAL_CONSUMED
                     else -> PaymentStage.OFFICIAL_LAUNCHED
                 },
+                userCancelled = userCancelled && cancelledOrUnavailable,
+                error = if (userCancelled && cancelledOrUnavailable) null else
+                    if (failed && !cancelledOrUnavailable) "verification_failed" else record.error,
                 openedAt = if (!cancelledOrUnavailable && !consumed) record.openedAt ?: now else record.openedAt,
                 deadline = if (!cancelledOrUnavailable && !consumed) record.deadline ?: now + config.maxSeconds * 1000L else record.deadline,
             ), session, false)
-            if (!cancelledOrUnavailable && !consumed && !failed) {
+            if (!cancelledOrUnavailable && !consumed) {
                 current(key, session)?.let { fulfilled = query(it, session, closing = false).stage == PaymentStage.SUCCESS }
             }
             if (failed) notifyFailure(session)

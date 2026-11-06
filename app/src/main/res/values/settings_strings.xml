@@ -1,0 +1,13 @@
+<resources>
+    <string name="settings_legal">LEGAL &amp; PRIVACY</string>
+    <string name="settings_application">APPLICATION &amp; SUPPORT</string>
+    <string name="settings_terms">Term of Use</string>
+    <string name="settings_about">About Elora</string>
+    <string name="settings_contact">Contact Us</string>
+    <string name="settings_version">Version %1$s</string>
+    <string name="settings_copy_email">Copy email</string>
+    <string name="settings_sign_out">Sign out</string>
+    <string name="settings_contact_body">Contact support using the email address below.</string>
+    <string name="settings_about_body">Create images and videos with %1$s. More information will be available before release.</string>
+    <string name="settings_information_back">Back to Settings</string>
+</resources>

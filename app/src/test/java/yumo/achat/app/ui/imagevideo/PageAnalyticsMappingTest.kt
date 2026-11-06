@@ -16,6 +16,7 @@ class PageAnalyticsMappingTest {
     fun `secondary destinations map to stable pages`() {
         assertEquals("generation", analyticsPageName(ImageToVideoDestination.UploadPhoto, 0, false))
         assertEquals("records", analyticsPageName(ImageToVideoDestination.MyTasks, 0, false))
+        assertEquals("records", analyticsPageName(ImageToVideoDestination.WalletRecords, 4, false))
         assertEquals("media", analyticsPageName(ImageToVideoDestination.MyTasks, 0, true))
         assertEquals("settings", analyticsPageName(ImageToVideoDestination.EditName, 3, false))
     }

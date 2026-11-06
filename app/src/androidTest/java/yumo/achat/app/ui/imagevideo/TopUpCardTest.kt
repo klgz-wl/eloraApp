@@ -1,6 +1,9 @@
 package yumo.achat.app.ui.imagevideo
 
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -20,11 +23,43 @@ import yumo.achat.app.ui.theme.AchatTheme
 import yumo.achat.core.payment.InitializedPayment
 import yumo.achat.core.payment.PaymentRecord
 import yumo.achat.core.payment.PaymentSdkParams
+import yumo.achat.core.payment.PaymentViewState
+import yumo.achat.core.billing.CoinPurchaseState
 import yumo.achat.core.payment.PaymentStage
 
 class TopUpCardTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test fun cancelledOfficialCheckoutAllowsDifferentAmount() = verifyCancelledSelection(true)
+    @Test fun cancelledThirdPartyCheckoutAllowsDifferentAmount() = verifyCancelledSelection(false)
+
+    @Test fun legacyCancelledOfficialCheckoutAllowsDifferentAmount() = verifyCancelledSelection(true, legacy = true)
+
+    private fun verifyCancelledSelection(official: Boolean, legacy: Boolean = false) {
+        var payment by mutableStateOf(PaymentViewState(epoch = "epoch",
+            record = paymentRecord("pack-200", "order", official).copy(
+                stage = if (official) PaymentStage.OFFICIAL_LAUNCHED else PaymentStage.CHECKOUT)))
+        var selected by mutableStateOf<String?>("pack-200")
+        var purchased: String? = null
+        composeRule.setContent {
+            val presentation = corePaymentPresentation(payment)
+            TopUpScreen(2, selected, !presentation.locksProductSelection,
+                TopUpUiState(catalog = catalog()),
+                purchaseState = if (official) TopUpPurchaseState.OfficialReady(payment.record!!) else TopUpPurchaseState.ThirdPartyReady(payment.record!!),
+                checkoutState = payment.toTopUpCheckoutState(CoinPurchaseState()),
+                onProductSelect = { selected = it }, onPreparePayment = { purchased = selected }, onRetry = {}, onNavigationSelect = {},
+                canRetryPayment = presentation.canRetry, canStartPayment = presentation.canStartPurchase)
+        }
+        composeRule.onNodeWithText("100").assertIsNotEnabled()
+        // The store / checkout has been dismissed by the user; no real payment is launched.
+        composeRule.runOnIdle {
+            payment = payment.copy(record = payment.record!!.copy(stage = PaymentStage.CLOSED, userCancelled = if (legacy) null else true))
+        }
+        composeRule.onNodeWithText("100").assertIsEnabled().performClick().assertIsSelected()
+        composeRule.onNodeWithText("Purchase").assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertEquals("pack-100", purchased) }
+    }
 
     @Test
     fun fulfilledOfficialPurchaseClearsPendingAndUnlocksSelection() {
@@ -46,12 +81,12 @@ class TopUpCardTest {
                 )
             }
         }
-        composeRule.onNodeWithText("Payment is pending in Google Play").assertIsDisplayed()
+        composeRule.onNodeWithText("Payment is pending in Google Play", substring = true).assertIsDisplayed()
         composeRule.runOnIdle { checkout = TopUpCheckoutState.AwaitingPayment(false) }
-        composeRule.onAllNodesWithText("Payment is pending in Google Play").assertCountEquals(0)
-        composeRule.onNodeWithText("Waiting for payment confirmation...").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Payment is pending in Google Play", substring = true).assertCountEquals(0)
+        composeRule.onNodeWithText("Waiting for payment confirmation...", substring = true).assertIsDisplayed()
         composeRule.runOnIdle { checkout = TopUpCheckoutState.Succeeded("order") }
-        composeRule.onAllNodesWithText("Waiting for payment confirmation...").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Waiting for payment confirmation...", substring = true).assertCountEquals(0)
         composeRule.onNodeWithText("100").performClick()
         composeRule.runOnIdle { assertEquals("pack-100", selected) }
     }
@@ -75,17 +110,14 @@ class TopUpCardTest {
             }
         }
 
-        composeRule.onAllNodesWithText("DMDS").assertCountEquals(2)
+        composeRule.onNodeWithText("Elora Tokens").assertIsDisplayed()
         composeRule.onNodeWithText("Valid for 90 days").assertIsDisplayed()
         composeRule.onNodeWithText("Valid for 60 days").assertIsDisplayed()
-        composeRule.onNodeWithText("LOCKED PROTOCOL").assertIsDisplayed()
-        composeRule.onNodeWithText("TIER // 02").assertIsDisplayed()
         composeRule.onNodeWithText("100").performClick()
 
         assertEquals("pack-100", selectedProductId)
-        composeRule.onNodeWithText("TIER // 01").assertIsDisplayed()
-        composeRule.onAllNodesWithText("TIER // 02").assertCountEquals(0)
-        composeRule.onNodeWithText("CONTINUE").performClick()
+        composeRule.onNodeWithText("100").assertIsSelected()
+        composeRule.onNodeWithText("Purchase").performClick()
         assertEquals(1, prepareCount)
     }
 
@@ -150,7 +182,7 @@ class TopUpCardTest {
     }
 
     @Test
-    fun preparedPaymentRoutesAreVisibleWithoutOpeningCheckout() {
+    fun preparedPaymentRoutesShowPreparationWithoutInternalChannelDetails() {
         var purchaseState by mutableStateOf<TopUpPurchaseState>(
             TopUpPurchaseState.OfficialReady(
                 record = paymentRecord("pack-200", "order-1", official = true),
@@ -171,14 +203,14 @@ class TopUpCardTest {
             }
         }
 
-        composeRule.onNodeWithText("Google Play ready").assertIsDisplayed()
-        composeRule.onNodeWithText("Checkout opens in phase 3").assertIsDisplayed()
+        composeRule.onNodeWithText("PREPARING...").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Checkout opens in phase 3").assertCountEquals(0)
 
         purchaseState = TopUpPurchaseState.ThirdPartyReady(
             record = paymentRecord("pack-200", "order-2", official = false),
         )
-        composeRule.onNodeWithText("Checkout ready").assertIsDisplayed()
-        composeRule.onNodeWithText("payu_web_us").assertIsDisplayed()
+        composeRule.onNodeWithText("PREPARING...").assertIsDisplayed()
+        composeRule.onAllNodesWithText("payu_web_us").assertCountEquals(0)
     }
 
     private fun catalog() = StoreCatalog(

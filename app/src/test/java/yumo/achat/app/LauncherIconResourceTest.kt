@@ -12,7 +12,7 @@ import org.junit.Test
 
 class LauncherIconResourceTest {
     private val mainRoot = Path.of("src/main")
-    private val launcherSafeScale = 0.61
+    private val launcherSafeScale = 72.0 / 108.0
 
     @Test
     fun `manifest wires launcher icons and logo assets exist`() {
@@ -20,7 +20,7 @@ class LauncherIconResourceTest {
 
         assertTrue(manifest.contains("""android:icon="@mipmap/ic_launcher""""))
         assertTrue(manifest.contains("""android:roundIcon="@mipmap/ic_launcher_round""""))
-        assertTrue(Files.exists(mainRoot.resolve("res/drawable-nodpi/zorv_logo_wordmark.png")))
+        assertTrue(Files.exists(mainRoot.resolve("res/drawable-nodpi/elora_logo.png")))
         assertTrue(Files.exists(mainRoot.resolve("res/mipmap-anydpi-v26/ic_launcher.xml")))
         assertTrue(Files.exists(mainRoot.resolve("res/mipmap-anydpi-v26/ic_launcher_round.xml")))
         assertTrue(Files.exists(mainRoot.resolve("res/mipmap-xxxhdpi/ic_launcher.png")))
@@ -29,7 +29,7 @@ class LauncherIconResourceTest {
 
     @Test
     fun `launcher foreground keeps full logo artwork inside adaptive icon safe area`() {
-        val sourceLogo = ImageIO.read(mainRoot.resolve("res/drawable-nodpi/zorv_logo_wordmark.png").toFile())
+        val sourceLogo = ImageIO.read(mainRoot.resolve("res/drawable-nodpi/elora_logo.png").toFile())
         val foreground = ImageIO.read(mainRoot.resolve("res/mipmap-xxxhdpi/ic_launcher_foreground.png").toFile())
         val expected = sourceLogo.scaledIntoSafeLauncherCanvas(foreground.width, launcherSafeScale)
 
@@ -40,14 +40,11 @@ class LauncherIconResourceTest {
     }
 
     private fun BufferedImage.scaledIntoSafeLauncherCanvas(size: Int, scale: Double): BufferedImage {
-        val canvas = BufferedImage(size, size, BufferedImage.TYPE_INT_RGB)
+        val canvas = BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB)
         val graphics = canvas.createGraphics()
         graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC)
         graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
         graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-        val background = getRGB(0, 0)
-        graphics.color = java.awt.Color(background)
-        graphics.fillRect(0, 0, size, size)
         val innerSize = (size * scale).toInt()
         val offset = (size - innerSize) / 2
         graphics.drawImage(this, offset, offset, innerSize, innerSize, null)
@@ -62,10 +59,11 @@ class LauncherIconResourceTest {
             for (x in 0 until width) {
                 val actual = getRGB(x, y)
                 val expected = other.getRGB(x, y)
+                total += abs(((actual ushr 24) and 0xff) - ((expected ushr 24) and 0xff))
                 total += abs(((actual shr 16) and 0xff) - ((expected shr 16) and 0xff))
                 total += abs(((actual shr 8) and 0xff) - ((expected shr 8) and 0xff))
                 total += abs((actual and 0xff) - (expected and 0xff))
-                channels += 3
+                channels += 4
             }
         }
         return total.toDouble() / channels.toDouble()

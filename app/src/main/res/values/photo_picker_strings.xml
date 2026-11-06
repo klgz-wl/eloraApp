@@ -1,0 +1,15 @@
+<resources>
+    <string name="picker_access_caption">This app can only access the photos you select</string>
+    <string name="picker_photos">Photos</string>
+    <string name="picker_albums">Albums</string>
+    <string name="picker_recent">Recent</string>
+    <string name="picker_close">Close photo picker</string>
+    <string name="picker_options">Photo picker options</string>
+    <string name="picker_add_photo">Add photo</string>
+    <string name="picker_recent_photo">Recent photo %1$d</string>
+    <string name="picker_browse_device">Choose from device</string>
+    <string name="picker_browse_albums">Browse device albums</string>
+    <string name="picker_selected_album">Selected photos (%1$d)</string>
+    <string name="picker_clear_recent">Clear recent selection history</string>
+    <string name="picker_empty">No photos selected yet. Tap + to choose from your device.</string>
+</resources>

@@ -311,12 +311,14 @@ class AchatBackendClient(
         categoryId: String? = null,
         page: Int = 1,
         pageSize: Int = 20,
+        homeFeatured: Boolean? = null,
     ): PagedResult<VisualTemplate> {
         require(sortBy == "hot" || sortBy == "latest") { "Unsupported template sort: $sortBy" }
         val query = buildList {
             add("page=$page")
             add("page_size=$pageSize")
             add("sort_by=$sortBy")
+            if (modality == "video") add("home_featured=${homeFeatured ?: false}")
             categoryId?.trim()?.takeIf { it.isNotEmpty() }?.let {
                 add("category_id=${URLEncoder.encode(it, StandardCharsets.UTF_8.name())}")
             }

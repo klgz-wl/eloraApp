@@ -19,6 +19,7 @@ class AchatBackendClientTemplateTest {
 
         assertTrue(query.get().contains("sort_by=hot"))
         assertFalse(query.get().contains("category_id"))
+        assertTrue(query.get().contains("home_featured=false"))
     }
 
     @Test
@@ -32,6 +33,30 @@ class AchatBackendClientTemplateTest {
 
         assertTrue(query.get().contains("sort_by=latest"))
         assertTrue(query.get().contains("category_id=portrait"))
+        assertFalse(query.get().contains("home_featured"))
+    }
+
+    @Test
+    fun `home feed keeps home featured on paginated requests`() = withTemplateServer { client, query ->
+        client.templates("token", "video", "hot", page = 2, homeFeatured = true)
+        assertTrue(query.get().contains("home_featured=true"))
+        assertTrue(query.get().contains("page=2"))
+        client.templates("token", "video", "hot", categoryId = "category one", page = 3, homeFeatured = false)
+        assertTrue(query.get().contains("home_featured=false"))
+        assertTrue(query.get().contains("category_id=category+one"))
+        assertTrue(query.get().contains("page=3"))
+    }
+
+    @Test
+    fun `generated creations filter modality while preserving pagination`() = withTemplateServer { client, query ->
+        client.visualResources("token", page = 2, modality = "video", resourceType = "generated")
+        assertTrue(query.get().contains("modality=video"))
+        assertTrue(query.get().contains("resource_type=generated"))
+        assertTrue(query.get().contains("page=2"))
+        client.visualResources("token", modality = "image", resourceType = "generated")
+        assertTrue(query.get().contains("modality=image"))
+        client.visualResources("token", resourceType = "generated")
+        assertFalse(query.get().contains("modality="))
     }
 
     private fun withTemplateServer(

@@ -1,0 +1,16 @@
+<resources>
+    <string name="mode_upload">Upload</string>
+    <string name="mode_mode">Mode</string>
+    <string name="mode_generate">Generate</string>
+    <string name="mode_engine">Rendering Engine</string>
+    <string name="mode_standard_fast">Standard Fast</string>
+    <string name="mode_ultra_quality">Ultra Studio Quality</string>
+    <string name="mode_your_photo">Your photo</string>
+    <string name="mode_template_preview">Template preview</string>
+    <string name="mode_change_photo">Change photo</string>
+    <string name="mode_back">Back to template preview</string>
+    <string name="mode_cost_description">Cost: %1$d diamonds</string>
+    <string name="mode_unavailable">No rendering modes available</string>
+    <string name="mode_unknown_cost">—</string>
+    <string name="generation_insufficient_balance">Insufficient credits. Please recharge to continue.</string>
+</resources>

@@ -11,3 +11,5 @@ internal fun uploadScreenContentShouldScroll(): Boolean = true
 
 @OptIn(UnstableApi::class)
 internal fun uploadPreviewVideoResizeMode(): Int = AspectRatioFrameLayout.RESIZE_MODE_FIT
+
+internal fun shouldShowUploadTemplatePreview(localImageUri: String?): Boolean = localImageUri.isNullOrBlank()

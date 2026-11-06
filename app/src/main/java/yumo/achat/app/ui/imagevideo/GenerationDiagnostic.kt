@@ -26,7 +26,7 @@ internal fun profileUpdateDiagnostic(error: Throwable): String = businessOperati
 
 internal fun generationSubmissionDiagnostic(error: Throwable): String {
     if (businessOperationDiagnostic(error, "") == "E-207") return "E-207"
-    if (shouldRouteGenerationErrorToTopUp(error.message)) return "E-405"
+    if (shouldRouteGenerationErrorToTopUp(error)) return "E-405"
     if (error is GenerationException) return when (error.reason) {
         GenerationFailure.SIGNED_OUT -> "E-207"
         GenerationFailure.INSUFFICIENT -> "E-405"

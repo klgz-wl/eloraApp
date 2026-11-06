@@ -11,35 +11,53 @@ import org.junit.Test
 import org.json.JSONObject
 
 class FormalProdConfigurationTest {
+    @Test fun `compiled flavor identity and initial prod version match configuration`() {
+        if (yumo.achat.app.BuildConfig.FLAVOR == "prod") {
+            assertEquals("com.elorattt.app", yumo.achat.app.BuildConfig.APPLICATION_ID)
+            assertEquals("1.0.0", yumo.achat.app.BuildConfig.VERSION_NAME)
+            assertEquals(1, yumo.achat.app.BuildConfig.VERSION_CODE)
+            assertEquals("T4b0x6g2r9s7kdpq5v3n8jchwm1yzf", yumo.achat.app.BuildConfig.TD_APP_ID)
+            assertEquals("MYfTXpj5jUiwD8h2LTMg7g", yumo.achat.app.BuildConfig.APPSFLYER_DEV_KEY)
+            assertEquals("https://release.eloraapp.loan/api/v1/", yumo.achat.app.BuildConfig.CORE_BASE_URL)
+            assertEquals("https://release.eloraapp.loan/payment-api/v1/", yumo.achat.app.BuildConfig.PAYMENT_BASE_URL)
+            assertEquals("wss://release.eloraapp.loan", yumo.achat.app.BuildConfig.CORE_STREAM_URL)
+            assertEquals("https://cdn.eloraapp.loan", yumo.achat.app.BuildConfig.CORE_CDN_URL)
+            assertEquals("https://release.eloraapp.loan", yumo.achat.app.BuildConfig.ACHAT_API_BASE_URL)
+            assertEquals("wss://release.eloraapp.loan/connection/websocket", yumo.achat.app.BuildConfig.ACHAT_WS_URL)
+
+        } else assertEquals("yumo.achat.app", yumo.achat.app.BuildConfig.APPLICATION_ID)
+        assertEquals(yumo.achat.app.BuildConfig.VERSION_NAME, yumo.achat.app.BuildConfig.ACHAT_CLIENT_VERSION)
+    }
+
     private val rootDir: File
         get() = requireNotNull(File(requireNotNull(System.getProperty("user.dir"))).parentFile)
 
     @Test
-    fun `all launcher flavors use lowercase zorv brand`() {
+    fun `all launcher flavors use Elora brand`() {
         val dev = rootDir.resolve("config/dev.properties").readProperties()
         val prod = rootDir.resolve("config/prod.properties").readProperties()
 
-        assertEquals("zorv", dev.getProperty("app.display.name"))
-        assertEquals("zorv", prod.getProperty("app.display.name"))
+        assertEquals("Elora", dev.getProperty("app.display.name"))
+        assertEquals("Elora", prod.getProperty("app.display.name"))
     }
 
     @Test
-    fun `prod flavor uses formal zorv identity instead of dev reuse`() {
+    fun `prod flavor uses formal Elora identity instead of dev reuse`() {
         val app = rootDir.resolve("config/app.properties").readProperties()
         val dev = rootDir.resolve("config/dev.properties").readProperties()
         val prod = rootDir.resolve("config/prod.properties").readProperties()
         val gradle = rootDir.resolve("app/build.gradle.kts").readText()
 
         assertEquals("FORMAL", app.getProperty("kit.prod.mode"))
-        assertEquals("com.zorv.app", prod.getProperty("applicationId"))
-        assertEquals("zorv", prod.getProperty("app.display.name"))
+        assertEquals("com.elorattt.app", prod.getProperty("applicationId"))
+        assertEquals("Elora", prod.getProperty("app.display.name"))
         assertEquals("2.0.0", dev.getProperty("app.version.name"))
-        assertEquals("1.0.3", prod.getProperty("app.version.name"))
-        assertEquals("4", prod.getProperty("app.version.code"))
+        assertEquals("1.0.0", prod.getProperty("app.version.name"))
+        assertEquals("1", prod.getProperty("app.version.code"))
         assertEquals("info@frostandbites.site", prod.getProperty("build.string.CONTACT_EMAIL"))
         assertEquals(
             2,
-            Regex("CORE_CDN_URL\\\" to \\\"https://cdn\\.zorv\\.date").findAll(gradle).count(),
+            Regex("CORE_CDN_URL\\\" to \\\"https://cdn\\.eloraapp\\.loan").findAll(gradle).count(),
         )
         assert(gradle.contains("requiredProdContactEmail"))
         assert(gradle.contains("info@frostandbites.site"))
@@ -68,25 +86,25 @@ class FormalProdConfigurationTest {
 
         assertEquals(
             2,
-            Regex("CORE_BASE_URL\\\" to \\\"https://release\\.zorv\\.date/api/v1/")
+            Regex("CORE_BASE_URL\\\" to \\\"https://release\\.eloraapp\\.loan/api/v1/")
                 .findAll(gradle).count(),
         )
-        assert(gradle.contains("\"ACHAT_API_BASE_URL\" to \"https://release.zorv.date\""))
+        assert(gradle.contains("\"ACHAT_API_BASE_URL\" to \"https://release.eloraapp.loan\""))
         assertEquals(
             2,
-            Regex("PAYMENT_BASE_URL\\\" to \\\"https://release\\.zorv\\.date/payment-api/v1/")
+            Regex("PAYMENT_BASE_URL\\\" to \\\"https://release\\.eloraapp\\.loan/payment-api/v1/")
                 .findAll(gradle).count(),
         )
         assertEquals(
             2,
-            Regex("CORE_STREAM_URL\\\" to \\\"wss://release\\.zorv\\.date")
+            Regex("CORE_STREAM_URL\\\" to \\\"wss://release\\.eloraapp\\.loan")
                 .findAll(gradle).count(),
         )
-        assert(gradle.contains("\"ACHAT_WS_URL\" to \"wss://release.zorv.date/connection/websocket\""))
+        assert(gradle.contains("\"ACHAT_WS_URL\" to \"wss://release.eloraapp.loan/connection/websocket\""))
         assertFalse(gradle.contains("release.appjoly.com"))
-        assert(Regex("CORE_CDN_URL\\\" to \\\"https://cdn\\.zorv\\.date").findAll(gradle).count() >= 2)
-        assertFalse(gradle.contains("\"CORE_BASE_URL\" to \"https://cdn.zorv.date/api/v1/\""))
-        assertFalse(gradle.contains("\"CORE_STREAM_URL\" to \"wss://cdn.zorv.date\""))
+        assert(Regex("CORE_CDN_URL\\\" to \\\"https://cdn\\.eloraapp\\.loan").findAll(gradle).count() >= 2)
+        assertFalse(gradle.contains("\"CORE_BASE_URL\" to \"https://cdn.eloraapp.loan/api/v1/\""))
+        assertFalse(gradle.contains("\"CORE_STREAM_URL\" to \"wss://cdn.eloraapp.loan\""))
     }
 
     @Test
@@ -96,7 +114,7 @@ class FormalProdConfigurationTest {
         val gradle = rootDir.resolve("app/build.gradle.kts").readText()
 
         assertEquals("2.0.0", dev.getProperty("app.version.name"))
-        assertEquals("1.0.3", prod.getProperty("app.version.name"))
+        assertEquals("1.0.0", prod.getProperty("app.version.name"))
         assertNull(dev.getProperty("build.string.ACHAT_CLIENT_VERSION"))
         assertNull(prod.getProperty("build.string.ACHAT_CLIENT_VERSION"))
         assertTrue(gradle.contains("setProperty(\"build.string.ACHAT_CLIENT_VERSION\", getProperty(\"app.version.name\"))"))
@@ -135,12 +153,13 @@ class FormalProdConfigurationTest {
         val prod = rootDir.resolve("config/prod.properties").readProperties()
         val gradle = rootDir.resolve("app/build.gradle.kts").readText()
 
+        assertEquals("MYfTXpj5jUiwD8h2LTMg7g", prod.getProperty("build.string.APPSFLYER_DEV_KEY"))
         assertNotEquals(
             dev.getProperty("build.string.APPSFLYER_DEV_KEY"),
             prod.getProperty("build.string.APPSFLYER_DEV_KEY"),
         )
         assertEquals(
-            "T4s7v9z0p2k6d5r8m1g3hqxcn4bwyj",
+            "T4b0x6g2r9s7kdpq5v3n8jchwm1yzf",
             prod.getProperty("build.string.TD_APP_ID"),
         )
         assertNotEquals(
@@ -151,7 +170,7 @@ class FormalProdConfigurationTest {
     }
 
     @Test
-    fun `prod google services uses the zorv firebase project`() {
+    fun `disabled legacy firebase registration is not relabeled as the new Elora app`() {
         val google = JSONObject(rootDir.resolve("app/src/prod/google-services.json").readText())
         val project = google.getJSONObject("project_info")
         val client = google.getJSONArray("client").getJSONObject(0).getJSONObject("client_info")
@@ -159,6 +178,15 @@ class FormalProdConfigurationTest {
         assertEquals("zorv-and", project.getString("project_id"))
         assertEquals("546418872161", project.getString("project_number"))
         assertEquals("com.zorv.app", client.getJSONObject("android_client_info").getString("package_name"))
+        val prod = rootDir.resolve("config/prod.properties").readProperties()
+        assertNotEquals(prod.getProperty("applicationId"), client.getJSONObject("android_client_info").getString("package_name"))
+        listOf("ENABLE_FIREBASE_ANALYTICS", "ENABLE_FIREBASE_CRASHLYTICS", "ENABLE_FIREBASE_MESSAGING").forEach {
+            assertEquals("false", prod.getProperty("build.boolean.$it"))
+        }
+        val gradle = rootDir.resolve("app/build.gradle.kts").readText()
+        assertTrue(gradle.contains("if (!prodFirebaseEnabled)"))
+        assertTrue(gradle.contains("dependsOn(clearDisabledProdGoogleServices)"))
+
         assertEquals("1:546418872161:android:1ec4fb9b9bdc62060dff20", client.getString("mobilesdk_app_id"))
     }
 

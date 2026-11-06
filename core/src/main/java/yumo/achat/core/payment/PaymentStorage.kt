@@ -26,7 +26,13 @@ import javax.inject.Singleton
     val recoveryRequired: Boolean = false,
     val recoveredPaymentMethod: String? = null,
     val recoveredTrigger: String? = null,
+    val userCancelled: Boolean? = null,
 ) {
+    // null preserves legacy absence; explicit false must survive serialization and restart.
+    // Legacy official CLOSED was only used before a completed store purchase (cancel / preflight / ready restore).
+    val canChangeProductAfterCancellation get() = stage == PaymentStage.CLOSED && error == null &&
+        initialized != null && (userCancelled == true ||
+        (userCancelled == null && initialized.channelType == "official" && !recoveryRequired))
     val thirdParty get() = initialized?.channelType == "third_party"
     val orderCreationUnknown get() = stage == PaymentStage.UNCERTAIN && orderId == null
     val initializationFailed get() = stage == PaymentStage.INITIALIZING && initialized == null && error != null

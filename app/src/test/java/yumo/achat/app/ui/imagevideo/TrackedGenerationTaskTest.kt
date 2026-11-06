@@ -8,6 +8,17 @@ import yumo.achat.core.backend.VisualGenerationTask
 import yumo.achat.core.backend.VisualResource
 
 class TrackedGenerationTaskTest {
+    @Test fun `selected result snapshot survives saved state serialization`() {
+        val original = TrackedGenerationTask("created", "My video", "video", "succeeded", "https://example.test/result.mp4", "video/mp4", null,
+            thumbnailUrl = "https://example.test/poster.png", viewed = true)
+        val bytes = java.io.ByteArrayOutputStream().use { output ->
+            java.io.ObjectOutputStream(output).use { it.writeObject(original) }
+            output.toByteArray()
+        }
+        val restored = java.io.ObjectInputStream(java.io.ByteArrayInputStream(bytes)).use { it.readObject() as TrackedGenerationTask }
+        assertEquals(original, restored)
+    }
+
     @Test
     fun `home badges only show active generation and unviewed completion`() {
         val base = TrackedGenerationTask(

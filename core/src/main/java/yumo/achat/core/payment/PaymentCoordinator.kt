@@ -62,7 +62,7 @@ class PaymentCoordinator @Inject constructor(val engine: PaymentEngine, private 
         }
     }
     fun retry(key: String) { scope.launch { engine.retry(key) } }
-    fun close(key: String) { scope.launch { engine.close(key) } }
+    fun close(key: String, userCancelled: Boolean = true) { scope.launch { engine.close(key, userCancelled) } }
     fun opened(key: String) { scope.launch { engine.opened(key) } }
     fun poll(key: String) { scope.launch { engine.poll(key) } }
     fun expireCheckout(key: String) { scope.launch { engine.expireCheckout(key) } }

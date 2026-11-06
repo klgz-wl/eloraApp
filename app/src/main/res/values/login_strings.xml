@@ -1,5 +1,5 @@
 <resources>
-    <string name="login_brand">Zorv</string>
+    <string name="login_brand">Elora</string>
     <string name="login_system_id">● SYS.ID // MORPHIX-01</string>
     <string name="login_version">◆ v%1$s</string>
     <string name="login_tagline">morph your reality, redefine yourself</string>
@@ -16,14 +16,14 @@
     <string name="login_agreement_required">Please agree to the Terms of Service and Privacy Policy first. (E-201)</string>
     <string name="login_agreement_checkbox">Agree to the Terms of Service and Privacy Policy</string>
     <string name="login_auth_protocol">● NEO-AUTH PROTOCOL</string>
-    <string name="login_account_caption">Log in with your account to access your Zorv model and workspace.</string>
-    <string name="login_account_label">// SYS.ACCOUNT</string>
-    <string name="login_password_label">// KEY.PASSWORD</string>
+    <string name="login_account_caption">Log in with your account to access your Elora model and workspace.</string>
+    <string name="login_account_label">ACCOUNT</string>
+    <string name="login_password_label">PASSWORD</string>
     <string name="login_required">[REQUIRED]</string>
     <string name="login_encrypted">[ENCRYPTED]</string>
-    <string name="login_account_hint">Enter account</string>
+    <string name="login_account_hint">Enter account or email</string>
     <string name="login_password_hint">Enter password</string>
-    <string name="login_sign_in">SIGN IN →</string>
+    <string name="login_sign_in">Sign In</string>
     <string name="login_account_invalid">Account must have 3–50 characters without spaces. (E-202)</string>
     <string name="login_password_invalid">Password must have 6–18 characters without spaces. (E-203)</string>
     <string name="login_failed">Login failed. Please try again. (E-204)</string>
@@ -32,4 +32,21 @@
     <string name="login_hide_password">Hide password</string>
     <string name="login_page_unavailable">Unable to load this page. (E-303)</string>
     <string name="login_loading_page">Loading page</string>
+    <string name="login_slogan_first">morph your reality,</string>
+    <string name="login_slogan_second">redefine yourself</string>
+    <string name="login_welcome_studio">AI FACE SWAP &amp; METAVERSE STUDIO</string>
+    <string name="login_feature_swap">4K Ultra-Real Swap</string>
+    <string name="login_feature_render">Instant AI Render</string>
+    <string name="login_feature_private">Private &amp; Encrypted</string>
+    <string name="login_feature_swap_symbol">✦</string>
+    <string name="login_feature_render_symbol">⚡</string>
+    <string name="login_feature_private_symbol">🔒</string>
+    <string name="login_agreement_period">.</string>
+    <string name="login_account_title">Sign in to Elora</string>
+    <string name="login_forgot_password">Forgot password?</string>
+    <string name="login_no_account">Don\'t have an account?</string>
+    <string name="login_create_workspace">Create workspace</string>
+    <string name="login_forgot_unavailable">Password recovery is not available in this version.</string>
+    <string name="login_create_explanation">Enter an account and password, then tap Sign In to create or access your workspace.</string>
+    <string name="login_help_dismiss">Got it</string>
 </resources>

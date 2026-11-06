@@ -1,0 +1,16 @@
+<resources>
+    <string name="record_title">Record</string>
+    <string name="record_back">Back from records</string>
+    <string name="record_help">Record information</string>
+    <string name="record_help_message">If your payment was successful but credits were not added, do not worry—the deducted amount will be automatically refunded to your account within 3 days due to payment channel review. Please check your balance for updates.</string>
+    <string name="record_understand">I Understand</string>
+    <string name="record_loading">Loading records…</string>
+    <string name="record_empty">No transactions yet</string>
+    <string name="record_load_error">Unable to load records</string>
+    <string name="record_load_more">Load more records</string>
+    <string name="record_retry_more">Retry loading more</string>
+    <string name="record_refresh">Refresh records</string>
+    <string name="record_video">Video generation</string>
+    <string name="record_image">Image generation</string>
+    <string name="record_credit">Credit Top-up / Refund</string>
+</resources>

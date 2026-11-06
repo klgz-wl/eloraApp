@@ -1,0 +1,5 @@
+<resources>
+    <string name="creation_viewer_image">Generated image</string>
+    <string name="creation_viewer_play">Play video</string>
+    <string name="creation_viewer_pause">Pause video</string>
+</resources>

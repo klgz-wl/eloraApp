@@ -187,6 +187,7 @@ internal enum class ImageToVideoDestination {
     MyTasks,
     Feedback,
     EditName,
+    WalletRecords,
 }
 
 internal data class BottomNavigationRoute(
@@ -195,7 +196,7 @@ internal data class BottomNavigationRoute(
 )
 
 internal fun routeFromBottomNavigation(navigationIndex: Int): BottomNavigationRoute {
-    require(navigationIndex in 0..3) { "Unsupported bottom navigation index: $navigationIndex" }
+    require(navigationIndex in 0..4) { "Unsupported bottom navigation index: $navigationIndex" }
     return BottomNavigationRoute(
         selectedNavigation = navigationIndex,
         destination = ImageToVideoDestination.Templates,
@@ -228,17 +229,17 @@ internal fun topUpReturnTargetForInsufficientBalance(
 
 internal fun routeAfterTopUpSuccess(returnTarget: BottomNavigationRoute?): BottomNavigationRoute? = returnTarget
 
-internal fun routeAfterGenerationTaskCreated(selectedNavigation: Int): BottomNavigationRoute =
-    BottomNavigationRoute(
-        selectedNavigation = selectedNavigation,
-        destination = ImageToVideoDestination.MyTasks,
-    )
+internal fun routeAfterGenerationTaskCreated(selectedNavigation: Int): BottomNavigationRoute {
+    require(selectedNavigation in 0..4) { "Unsupported generation source: $selectedNavigation" }
+    return BottomNavigationRoute(selectedNavigation = 4, destination = ImageToVideoDestination.Templates)
+}
 
 internal fun bottomNavigationAnalyticsName(navigationIndex: Int): String = when (navigationIndex) {
     0 -> "video"
     1 -> "image"
     2 -> "purchase"
     3 -> "profile"
+    4 -> "home"
     else -> "unknown"
 }
 
@@ -256,10 +257,14 @@ internal enum class TemplateSection {
     Image,
 }
 
-internal fun templateSortBy(section: TemplateSection, selectedTab: Int): String = when {
-    section == TemplateSection.Video && selectedTab == 0 -> "hot"
-    else -> "latest"
-}
+internal fun templateSortBy(section: TemplateSection, selectedTab: Int): String =
+    if (section == TemplateSection.Video) "hot" else "latest"
+
+internal fun templateCatalogNeedsStartupReload(section: TemplateSection, selectedTab: Int): Boolean =
+    section == TemplateSection.Video || selectedTab > 0
+
+internal fun templateHomeFeatured(section: TemplateSection, navigation: Int): Boolean? =
+    if (section == TemplateSection.Video) navigation == 4 else null
 
 internal fun shouldShowTemplateTabs(@Suppress("UNUSED_PARAMETER") section: TemplateSection): Boolean = true
 
@@ -439,7 +444,7 @@ internal sealed interface TopUpPurchaseState {
     ) : TopUpPurchaseState
 }
 
-private data class SelectedGenerationTemplate(
+internal data class SelectedGenerationTemplate(
     val templateId: String,
     val modality: String,
     val quality: String,
@@ -449,7 +454,9 @@ private data class SelectedGenerationTemplate(
     val categoryId: String,
     val source: String,
     val quotedDiamondCost: Int,
-)
+    val fastPrice: Int? = null,
+    val qualityPrice: Int? = null,
+) : java.io.Serializable
 
 private fun SelectedGenerationTemplate.analyticsContext() = GenerationAnalyticsContext(
     templateId = templateId,
@@ -472,6 +479,7 @@ internal data class CreditPack(
     val badgeText: String? = null,
     val iconUrl: String? = null,
     val badgeTextRes: Int? = null,
+    val discountPercent: Int? = null,
 ) {
     val tierLabel: String
         get() = "TIER // ${tier.toString().padStart(2, '0')}"
@@ -503,6 +511,9 @@ internal fun StoreProduct.toCreditPackPresentation(
         description = creditPackValidityDescription(),
         price = formatStoreMoney(effectivePrice, currency, locale),
         originalPrice = comparisonPrice?.let { formatStoreMoney(it, currency, locale) },
+        discountPercent = comparisonPrice?.let { comparison ->
+            comparison.subtract(effectivePrice).multiply(BigDecimal(100)).divide(comparison, 0, java.math.RoundingMode.DOWN).toInt().takeIf { it > 0 }
+        },
         tier = displayIndex + 1,
         accentColor = accents[displayIndex % accents.size],
         bonus = totalBonus.takeIf { it > 0 },
@@ -626,6 +637,7 @@ fun ImageToVideoScreen(
         }
         return
     }
+    key(ready.first.userId) {
     ImageToVideoHomeScreen(
         repository = repository,
         authViewModel = authViewModel,
@@ -640,6 +652,7 @@ fun ImageToVideoScreen(
         },
         modifier = modifier,
     )
+    }
 }
 
 @Composable
@@ -714,8 +727,15 @@ private fun ImageToVideoHomeScreen(
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var currentTemplate by rememberSaveable { mutableIntStateOf(1) }
     var isPlaying by rememberSaveable { mutableStateOf(true) }
-    var selectedNavigation by rememberSaveable { mutableIntStateOf(0) }
+    var selectedNavigation by rememberSaveable { mutableIntStateOf(4) }
+    val generationStateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+    val browserStateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+    var generationFlowSerial by rememberSaveable { mutableIntStateOf(0) }
+    var topUpBackNavigation by rememberSaveable { mutableIntStateOf(4) }
+    var topUpBackDestination by rememberSaveable { mutableStateOf(ImageToVideoDestination.Templates.name) }
     var backendState by remember { mutableStateOf(AchatBackendUiState()) }
+    var selectedMeFilter by rememberSaveable(startupSession.userId) { mutableStateOf(MeCreationFilter.Creations) }
+    var meSettingsOpen by rememberSaveable(startupSession.userId) { mutableStateOf(false) }
     var startupReloadSerial by remember { mutableIntStateOf(0) }
     var videoTemplateRequestSerial by remember { mutableStateOf(0L) }
     var imageTemplateRequestSerial by remember { mutableStateOf(0L) }
@@ -740,11 +760,12 @@ private fun ImageToVideoHomeScreen(
     var pendingTopUpReturnNavigation by rememberSaveable { mutableIntStateOf(-1) }
     var pendingTopUpReturnDestination by rememberSaveable { mutableStateOf<String?>(null) }
     var topUpEntrySource by rememberSaveable { mutableStateOf("main") }
-    var selectedGenerationTemplate by remember { mutableStateOf<SelectedGenerationTemplate?>(null) }
+    var selectedGenerationTemplate by rememberSaveable { mutableStateOf<SelectedGenerationTemplate?>(null) }
     var sessionTasks by remember { mutableStateOf<List<TrackedGenerationTask>>(emptyList()) }
     var serverHistoryTasks by remember { mutableStateOf<List<TrackedGenerationTask>>(emptyList()) }
     var localTaskStoreLoaded by remember { mutableStateOf(false) }
-    var selectedResultTask by remember { mutableStateOf<TrackedGenerationTask?>(null) }
+    var selectedResultTask by rememberSaveable(startupSession.userId) { mutableStateOf<TrackedGenerationTask?>(null) }
+    var resultReturnToMe by rememberSaveable(startupSession.userId) { mutableStateOf(false) }
     var isLoadingTaskHistory by remember { mutableStateOf(false) }
     var taskHistoryError by remember { mutableStateOf<String?>(null) }
     var taskHistoryPage by remember { mutableIntStateOf(1) }
@@ -803,7 +824,7 @@ private fun ImageToVideoHomeScreen(
         val routeDestination = runCatching {
             ImageToVideoDestination.valueOf(destinationName)
         }.getOrNull() ?: return null
-        return if (pendingTopUpReturnNavigation in 0..3) {
+        return if (pendingTopUpReturnNavigation in 0..4) {
             BottomNavigationRoute(pendingTopUpReturnNavigation, routeDestination)
         } else {
             null
@@ -843,6 +864,7 @@ private fun ImageToVideoHomeScreen(
         append: Boolean = false,
     ) {
         val modality = if (section == TemplateSection.Video) "video" else "image"
+        val homeFeatured = templateHomeFeatured(section, selectedNavigation)
         val gateRevisionAtStart = homeGateRevision
         val gateTargetAtStart = attributionRuntime?.currentGateTarget()
         val requestSerial = when (section) {
@@ -853,6 +875,7 @@ private fun ImageToVideoHomeScreen(
             TemplateSection.Video -> if (append) {
                 backendState.copy(videoPaginationLoading = true, videoPaginationErrorMessage = null)
             } else backendState.copy(
+                videoTemplates = emptyList(),
                 videoTemplatesLoading = true,
                 videoTemplatePage = 1,
                 videoTemplatesHasMore = false,
@@ -861,6 +884,7 @@ private fun ImageToVideoHomeScreen(
             TemplateSection.Image -> if (append) {
                 backendState.copy(imagePaginationLoading = true, imagePaginationErrorMessage = null)
             } else backendState.copy(
+                imageTemplates = emptyList(),
                 imageTemplatesLoading = true,
                 imageTemplatePage = 1,
                 imageTemplatesHasMore = false,
@@ -879,7 +903,8 @@ private fun ImageToVideoHomeScreen(
                     repository.loadTemplates(
                         modality = modality,
                         sortBy = sortBy,
-                        categoryId = categoryId,
+                        categoryId = if (homeFeatured == true) null else categoryId,
+                        homeFeatured = homeFeatured,
                         page = page,
                     )
                 }
@@ -921,6 +946,7 @@ private fun ImageToVideoHomeScreen(
         reloadTemplates(
             section = section,
             sortBy = templateSortBy(section, selectedTab),
+            categoryId = templateCatalogCategoryId(if (section == TemplateSection.Video) backendState.videoCategories else backendState.imageCategories, selectedTab),
         )
     }
 
@@ -945,6 +971,7 @@ private fun ImageToVideoHomeScreen(
         reloadTemplates(
             section = section,
             sortBy = templateSortBy(section, selectedTab),
+            categoryId = templateCatalogCategoryId(if (section == TemplateSection.Video) backendState.videoCategories else backendState.imageCategories, selectedTab),
             page = page + 1,
             append = true,
         )
@@ -1028,13 +1055,13 @@ private fun ImageToVideoHomeScreen(
         sessionTasks = upsertTrackedGenerationTask(sessionTasks, trackedTask)
         val route = routeAfterGenerationTaskCreated(selectedNavigation)
         selectedResultTask = null
-        isLoadingTaskHistory = true
-        taskHistoryError = null
-        taskHistoryPaginationLoading = false
-        taskHistoryPaginationError = null
-        taskHistoryRefreshSerial += 1
+        resultReturnToMe = false
+        selectedTab = 0
+        currentTemplate = 1
+        templateEdgeHintRes = null
         selectedNavigation = route.selectedNavigation
         destination = route.destination
+        reloadTemplates(TemplateSection.Video, sortBy = templateSortBy(TemplateSection.Video, 0))
         if (trackedTask.isFinished && trackedTask.requestId.isNotBlank()) {
             generationEvents.terminalResult(
                 context = GenerationAnalyticsContext(
@@ -1142,6 +1169,7 @@ private fun ImageToVideoHomeScreen(
     }
 
     fun openMyTasks() {
+        resultReturnToMe = false
         selectedResultTask = null
         isLoadingTaskHistory = true
         taskHistoryError = null
@@ -1160,7 +1188,20 @@ private fun ImageToVideoHomeScreen(
         taskHistoryRefreshSerial += 1
     }
 
+    fun rememberTopUpOrigin() {
+        if (selectedNavigation != 2) {
+            topUpBackNavigation = selectedNavigation
+            topUpBackDestination = destination.name
+        }
+    }
+    fun returnFromTopUp() {
+        selectedNavigation = topUpBackNavigation
+        destination = runCatching { ImageToVideoDestination.valueOf(topUpBackDestination) }.getOrDefault(ImageToVideoDestination.Templates)
+    }
+
     fun navigateFromBottomNavigation(navigationIndex: Int) {
+        if (navigationIndex == 2) rememberTopUpOrigin()
+        meSettingsOpen = false
         val route = routeFromBottomNavigation(navigationIndex)
         val previousNavigation = selectedNavigation
         setPendingTopUpReturnRoute(topUpReturnTargetForManualEntry())
@@ -1187,14 +1228,16 @@ private fun ImageToVideoHomeScreen(
         currentTemplate = 1
         templateEdgeHintRes = null
         selectedResultTask = null
+        resultReturnToMe = false
         destination = route.destination
-        if (navigationIndex == 0 || navigationIndex == 1) {
-            val section = if (navigationIndex == 0) TemplateSection.Video else TemplateSection.Image
+        if (navigationIndex == 0 || navigationIndex == 1 || navigationIndex == 4) {
+            val section = if (navigationIndex == 1) TemplateSection.Image else TemplateSection.Video
             reloadTemplates(section = section, sortBy = templateSortBy(section, selectedTab = 0))
         }
     }
 
     fun navigateFromBalanceBadge() {
+        rememberTopUpOrigin()
         val route = routeFromBalanceBadgeClick()
         setPendingTopUpReturnRoute(topUpReturnTargetForManualEntry())
         topUpEntrySource = balanceTopUpEntrySource(selectedNavigation, destination)
@@ -1211,10 +1254,12 @@ private fun ImageToVideoHomeScreen(
         currentTemplate = 1
         templateEdgeHintRes = null
         selectedResultTask = null
+        resultReturnToMe = false
         destination = route.destination
     }
 
     fun navigateToTopUpForInsufficientBalance() {
+        rememberTopUpOrigin()
         topUpEntrySource = insufficientBalanceTopUpEntrySource()
         setPendingTopUpReturnRoute(
             topUpReturnTargetForInsufficientBalance(
@@ -1320,6 +1365,23 @@ private fun ImageToVideoHomeScreen(
                 videoCategories = homeData.videoCategories,
                 imageCategories = homeData.imageCategories,
             )
+            val activeCatalog = when (selectedNavigation) {
+                0 -> TemplateSection.Video
+                1 -> TemplateSection.Image
+                else -> null
+            }
+            if (activeCatalog != null &&
+                (if (activeCatalog == TemplateSection.Image) applyStartupImage else applyStartupVideo) &&
+                templateCatalogNeedsStartupReload(activeCatalog, selectedTab)) {
+                reloadTemplates(
+                    section = activeCatalog,
+                    sortBy = templateSortBy(activeCatalog, selectedTab),
+                    categoryId = templateCatalogCategoryId(
+                        if (activeCatalog == TemplateSection.Image) backendState.imageCategories else backendState.videoCategories,
+                        selectedTab,
+                    ),
+                )
+            }
         } catch (_: TimeoutCancellationException) {
             if (attributionRuntime != null && gateTargetAtStart != attributionRuntime.currentGateTarget()) return@LaunchedEffect
             backendState = backendState.copy(isLoading = false, errorMessage = "Backend unavailable", videoTemplatesLoading = false, imageTemplatesLoading = false)
@@ -1555,7 +1617,13 @@ private fun ImageToVideoHomeScreen(
     ) {
         BackgroundGlow()
         when (destination) {
+            ImageToVideoDestination.WalletRecords -> {
+                WalletRecordRoute(profileId = backendState.profileId,
+                    loadPage = { page, size -> repository.walletTransactions(page, size) },
+                    onBack = { destination = ImageToVideoDestination.Templates })
+            }
             ImageToVideoDestination.Templates -> {
+                val browserContent: @Composable () -> Unit = {
                 TemplateBrowserScreen(
                     selectedTab = selectedTab,
                     currentTemplate = currentTemplate,
@@ -1568,7 +1636,8 @@ private fun ImageToVideoHomeScreen(
                         templateEdgeHintRes = null
                         val section = if (selectedNavigation == 1) TemplateSection.Image else TemplateSection.Video
                         val sortBy = templateSortBy(section, it)
-                        reloadTemplates(section = section, sortBy = sortBy)
+                        reloadTemplates(section = section, sortBy = sortBy,
+                            categoryId = templateCatalogCategoryId(if (section == TemplateSection.Video) backendState.videoCategories else backendState.imageCategories, it))
                         analytics.track(
                             name = "template_category_tab_click",
                             parameters = mapOf(
@@ -1594,7 +1663,9 @@ private fun ImageToVideoHomeScreen(
                                 "modality" to template.modality,
                                 "source" to template.source,
                                 "position" to position.toLong(),
-                                "filter_category_id" to "",
+                                "filter_category_id" to templateCatalogCategoryId(
+                                    if (template.modality == "image") backendState.imageCategories else backendState.videoCategories, selectedTab,
+                                ).orEmpty(),
                             ),
                             userId = backendState.profileId,
                         )
@@ -1612,11 +1683,12 @@ private fun ImageToVideoHomeScreen(
                                 userId = backendState.profileId,
                             )
                         }
+                        generationStateHolder.removeState("generation-$generationFlowSerial")
+                        generationFlowSerial++
+                        setPendingTopUpReturnRoute(null)
                         selectedGenerationTemplate = template
                         destination = ImageToVideoDestination.UploadPhoto
                     },
-                    onConversationLog = ::openMyTasks,
-                    onFeedback = { destination = ImageToVideoDestination.Feedback },
                     onLogout = { performAccountAction(false) },
                     onDeleteAccount = { deleteDialogOpen = true; accountActionError = null },
                     accountActionBusy = accountActionBusy,
@@ -1631,7 +1703,9 @@ private fun ImageToVideoHomeScreen(
                     onLoadMoreTemplates = ::loadNextTemplatePage,
                     onNavigationSelect = ::navigateFromBottomNavigation,
                     selectedProductId = topUpPaymentController.selectedProductId,
-                    productSelectionEnabled = !topUpPaymentController.productSelectionLocked,
+                    productSelectionEnabled = !topUpPaymentController.productSelectionLocked && !topUpPaymentController.preparingPayment,
+                    canRetryPayment = topUpPaymentController.canRetryPayment, canStartPayment = topUpPaymentController.canStartPayment,
+                    onTopUpBack = ::returnFromTopUp,
                     topUpState = topUpState,
                     purchaseState = topUpPaymentController.state,
                     checkoutState = topUpPaymentController.checkoutState,
@@ -1642,6 +1716,7 @@ private fun ImageToVideoHomeScreen(
                     },
                     onTopUpRetry = { topUpRefreshSerial += 1 },
                     onBalanceClick = ::navigateFromBalanceBadge,
+                    onRecordClick = { destination = ImageToVideoDestination.WalletRecords },
                     edgeHint = templateEdgeHint,
                     onEdgeHintDismiss = { messageId ->
                         if (templateEdgeHintSerial.toLong() == messageId) {
@@ -1649,10 +1724,25 @@ private fun ImageToVideoHomeScreen(
                         }
                     },
                     backendState = backendState,
+                    selectedMeFilter = selectedMeFilter,
+                    onMeFilterChange = { selectedMeFilter = it },
+                    meSettingsOpen = meSettingsOpen, onMeSettingsChange = { meSettingsOpen = it },
+                    meCompletionRevision = sessionTasks.filter { it.canOpenResult }.joinToString { it.taskId },
+                    loadCreationsPage = { modality, page -> repository.generatedResources(page = page, modality = modality) },
+                    onOpenCreation = { task ->
+                        resultReturnToMe = true
+                        openGenerationResult(task)
+                        destination = ImageToVideoDestination.MyTasks
+                    },
                 )
+                }
+                if (selectedNavigation in listOf(0, 1, 4)) {
+                    browserStateHolder.SaveableStateProvider("catalog-$selectedNavigation", browserContent)
+                } else browserContent()
             }
 
             ImageToVideoDestination.UploadPhoto -> {
+                generationStateHolder.SaveableStateProvider("generation-$generationFlowSerial") {
                 UploadPhotoScreen(
                     selectedNavigation = selectedNavigation,
                     onBack = { destination = ImageToVideoDestination.Templates },
@@ -1667,16 +1757,22 @@ private fun ImageToVideoHomeScreen(
                     analyticsUserId = backendState.profileId,
                     modifier = Modifier.fillMaxSize(),
                 )
+                }
             }
 
             ImageToVideoDestination.MyTasks -> {
                 val resultTask = selectedResultTask
                 if (resultTask != null) {
-                    GenerationResultScreen(
-                        task = resultTask,
-                        onBack = { selectedResultTask = null },
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    val returnFromResult: () -> Unit = {
+                        selectedResultTask = null
+                        if (resultReturnToMe) {
+                            resultReturnToMe = false
+                            selectedNavigation = 3
+                            destination = ImageToVideoDestination.Templates
+                        }
+                    }
+                    if (resultReturnToMe) CreationViewerScreen(resultTask, onBack = returnFromResult)
+                    else GenerationResultScreen(task = resultTask, onBack = returnFromResult, modifier = Modifier.fillMaxSize())
                 } else {
                     MyTasksScreen(
                         tasks = trackedTasks,
@@ -1799,6 +1895,17 @@ private fun ImageToVideoHomeScreen(
     }
 }
 
+private fun VisualTemplate.toGenerationSelection(section: TemplateSection): SelectedGenerationTemplate? {
+    val media = toPreviewMedia()
+    if (!media.isUsableGenerationMedia()) return null
+    return SelectedGenerationTemplate(
+        templateId = id, modality = if (section == TemplateSection.Image) "image" else "video", quality = if (fastPrice != null) "fast" else "quality",
+        title = name, previewMedia = media, durationSeconds = durationSeconds.takeIf { it > 0 } ?: 5,
+        categoryId = categoryId.orEmpty(), source = if (section == TemplateSection.Image) "image" else "video", quotedDiamondCost = displayPrice ?: 0,
+        fastPrice = fastPrice, qualityPrice = qualityPrice,
+    )
+}
+
 @Composable
 private fun TemplateBrowserScreen(
     selectedTab: Int,
@@ -1818,8 +1925,6 @@ private fun TemplateBrowserScreen(
     onTemplatePageSelected: (Int) -> Unit,
     onTemplateExpose: (SelectedGenerationTemplate, Int) -> Unit,
     onUseTemplate: (SelectedGenerationTemplate?) -> Unit,
-    onConversationLog: () -> Unit,
-    onFeedback: () -> Unit,
     onLogout: () -> Unit,
     onDeleteAccount: () -> Unit,
     accountActionBusy: Boolean,
@@ -1835,11 +1940,20 @@ private fun TemplateBrowserScreen(
     onPreparePayment: () -> Unit,
     onTopUpRetry: () -> Unit,
     onBalanceClick: () -> Unit,
+    onRecordClick: () -> Unit = onBalanceClick,
     edgeHint: TransientMessage?,
     onEdgeHintDismiss: (Long) -> Unit,
     backendState: AchatBackendUiState,
     attributionProfileRetryRequired: Boolean = false,
     onAttributionProfileRetry: () -> Unit = {},
+    meCompletionRevision: String = "",
+    selectedMeFilter: MeCreationFilter = MeCreationFilter.Creations,
+    onMeFilterChange: (MeCreationFilter) -> Unit = {},
+    meSettingsOpen: Boolean = false, onMeSettingsChange: (Boolean) -> Unit = {},
+    loadCreationsPage: suspend (String?, Int) -> yumo.achat.core.backend.PagedResult<yumo.achat.core.backend.VisualResource>,
+    onOpenCreation: (TrackedGenerationTask) -> Unit,
+    canRetryPayment: Boolean, canStartPayment: Boolean, onTopUpBack: () -> Unit,
+
 ) {
     if (selectedNavigation == 2) {
         TopUpScreen(
@@ -1858,29 +1972,26 @@ private fun TemplateBrowserScreen(
             onPreparePayment = onPreparePayment,
             onRetry = onTopUpRetry,
             onNavigationSelect = onNavigationSelect,
+            onBack = onTopUpBack, canRetryPayment = canRetryPayment, canStartPayment = canStartPayment, onHistory = onRecordClick,
         )
         return
     }
 
     if (selectedNavigation == 3) {
-        MeScreen(
-            selectedNavigation = selectedNavigation,
-            onConversationLog = onConversationLog,
-            onFeedback = onFeedback,
-            onLogout = onLogout,
-            onDeleteAccount = onDeleteAccount,
-            accountActionBusy = accountActionBusy,
-            accountActionError = accountActionError,
-            onEditName = onEditName,
-            onEditAvatar = onEditAvatar,
-            isAvatarSaving = isAvatarSaving,
-            profileName = backendState.profileName,
-            profileId = backendState.profileId,
-            profileAvatarUrl = backendState.profileAvatarUrl,
-            localProfileAvatarUri = localProfileAvatarUri,
-            diamondBalance = backendState.diamondBalance,
-            onBalanceClick = onBalanceClick,
-            onNavigationSelect = onNavigationSelect,
+        if (!meSettingsOpen) {
+            MeCreationsRoute(
+                profileId = backendState.profileId, profileName = backendState.profileName,
+                avatar = localProfileAvatarUri ?: backendState.profileAvatarUrl, balance = backendState.diamondBalance,
+                avatarSaving = isAvatarSaving, completionRevision = meCompletionRevision, loadPage = loadCreationsPage,
+                onEditName = onEditName, onEditAvatar = onEditAvatar, onSettings = { onMeSettingsChange(true) },
+                onOpen = onOpenCreation, onNavigation = onNavigationSelect, onPurchase = onBalanceClick,
+                initialFilter = selectedMeFilter, onFilterChanged = onMeFilterChange,
+            )
+            return
+        }
+        SettingsRoute(
+            accountActionBusy = accountActionBusy, accountActionError = accountActionError,
+            onBack = { onMeSettingsChange(false) }, onLogout = onLogout, onDeleteAccount = onDeleteAccount,
         )
         return
     }
@@ -1906,134 +2017,45 @@ private fun TemplateBrowserScreen(
     val templatesHasMore = if (section == TemplateSection.Image) {
         backendState.imageTemplatesHasMore
     } else backendState.videoTemplatesHasMore
-    val selectedTemplateIndex = if (templates.isEmpty()) 0 else (currentTemplate - 1) % templates.size
-    val selectedTemplate = templates.getOrNull(selectedTemplateIndex)
-    val navigationTotal = templates.size
-    val videoPreloadTargets = if (section == TemplateSection.Video) {
-        templates.videoPreviewPreloadTargets(selectedTemplateIndex)
-    } else {
-        emptyList()
-    }
-    val nearbyImageUrls = templates.nearbyImagePreviewUrls(selectedTemplateIndex)
-    val selectedGenerationTemplate = selectedTemplate?.let { template ->
-        val previewMedia = template.toPreviewMedia()
-        if (!previewMedia.isUsableGenerationMedia()) return@let null
-        SelectedGenerationTemplate(
-            templateId = template.id,
-            modality = if (section == TemplateSection.Image) "image" else "video",
-            quality = if (template.fastPrice != null) "fast" else "quality",
-            title = template.name,
-            previewMedia = previewMedia,
-            durationSeconds = template.durationSeconds.takeIf { it > 0 } ?: 5,
-            categoryId = template.categoryId.orEmpty(),
-            source = if (section == TemplateSection.Image) "image" else "video",
-            quotedDiamondCost = template.displayPrice ?: 0,
+    if (selectedNavigation == 4) {
+        HomeVideoFeedScreen(
+            templates = templates, balance = backendState.diamondBalance,
+            loading = templatesLoading, error = templateErrorMessage,
+            hasMore = templatesHasMore, paginationLoading = paginationLoading, paginationError = paginationErrorMessage,
+            onLoadMore = { onLoadMoreTemplates(TemplateSection.Video) },
+            onRetry = { onTemplateRetry(TemplateSection.Video) },
+            onUse = { template -> template.toGenerationSelection(TemplateSection.Video)?.let(onUseTemplate) },
+            onExpose = { template, position -> template.toGenerationSelection(TemplateSection.Video)?.let { onTemplateExpose(it, position) } },
+            onBalance = onBalanceClick, onRecord = onRecordClick, onNavigation = onNavigationSelect,
+            statusContent = {
+                AttributionProfileRetry(attributionProfileRetryRequired, onAttributionProfileRetry)
+                TemplateTaskStatusBadges(selectedNavigation, homeTaskBadges, Modifier.padding(12.dp))
+            },
         )
+        return
     }
-    val visiblePrice = selectedGenerationTemplate?.quotedDiamondCost
-    val exposureLifecycle = LocalLifecycleOwner.current.lifecycle
-    val exposedTemplates = remember(selectedNavigation, selectedTab) { mutableSetOf<String>() }
-    DisposableEffect(exposureLifecycle, selectedNavigation, selectedTab) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) exposedTemplates.clear()
-        }
-        exposureLifecycle.addObserver(observer)
-        onDispose {
-            exposureLifecycle.removeObserver(observer)
-            exposedTemplates.clear()
-        }
-    }
-    LaunchedEffect(selectedGenerationTemplate?.templateId, selectedTab, selectedNavigation, exposureLifecycle) {
-        exposureLifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            selectedGenerationTemplate?.let { template ->
-                if (exposedTemplates.add(template.templateId)) {
-                    onTemplateExpose(template, selectedTemplateIndex + 1)
-                }
+    TemplateCatalogScreen(
+        templates = templates,
+        categories = if (section == TemplateSection.Image) backendState.imageCategories else backendState.videoCategories,
+        selectedTab = selectedTab, balance = backendState.diamondBalance,
+        loading = templatesLoading, error = templateErrorMessage,
+        hasMore = templatesHasMore, paginationLoading = paginationLoading, paginationError = paginationErrorMessage,
+        onTabSelect = onTabSelect,
+        onTemplateSelect = { template, position ->
+            template.toGenerationSelection(section)?.let { selection ->
+                onTemplatePageSelected(position)
+                onUseTemplate(selection)
             }
-            awaitCancellation()
-        }
-    }
-    LaunchedEffect(selectedTemplateIndex, templates.size, templatesHasMore, paginationLoading, paginationErrorMessage) {
-        if (shouldAutoLoadNextTemplatePage(
-                hasItems = templates.isNotEmpty(),
-                atLastItem = selectedTemplateIndex == templates.lastIndex,
-                hasMore = templatesHasMore,
-                loading = paginationLoading,
-                errorMessage = paginationErrorMessage,
-            )
-        ) {
-            onLoadMoreTemplates(section)
-        }
-    }
-    TemplateMediaPreloader(videoTargets = videoPreloadTargets, imageUrls = nearbyImageUrls)
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        Header(section = section, diamondBalance = backendState.diamondBalance, onBalanceClick = onBalanceClick)
-        AttributionProfileRetry(attributionProfileRetryRequired, onAttributionProfileRetry)
-        Spacer(Modifier.height(8.dp))
-        if (shouldShowTemplateTabs(section)) {
-            CategoryTabs(
-                section = section,
-                selectedTab = selectedTab,
-                onSelect = onTabSelect,
-            )
-        }
-        TemplateBackendStatus(
-            isLoading = templatesLoading,
-            errorMessage = templateErrorMessage,
-            selectedTemplate = selectedTemplate,
-        )
-        Spacer(Modifier.height(7.dp))
-        TemplateFeedPager(
-            templates = templates,
-            currentTemplate = currentTemplate,
-            isLoading = templatesLoading,
-            errorMessage = templateErrorMessage,
-            onRetry = { onTemplateRetry(section) },
-            isPlaying = isPlaying,
-            onPlayToggle = onPlayToggle,
-            onMoveTemplate = { direction -> onMoveTemplate(direction, navigationTotal) },
-            onTemplatePageSelected = onTemplatePageSelected,
-            edgeHint = edgeHint,
-            onEdgeHintDismiss = onEdgeHintDismiss,
-            homeTaskBadges = homeTaskBadges,
-            modifier = Modifier.fillMaxWidth().weight(1f),
-        )
-        Spacer(Modifier.height(12.dp))
-        when {
-            paginationLoading -> Text(
-                text = stringResource(R.string.template_loading_more),
-                color = AchatCyan,
-                fontSize = 10.sp,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            )
-            !paginationErrorMessage.isNullOrBlank() -> Text(
-                text = paginationErrorMessage,
-                color = AchatPink,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .clickable { onLoadMoreTemplates(section) }
-                    .padding(6.dp),
-            )
-        }
-        TemplateButton(
-            price = visiblePrice,
-            enabled = selectedGenerationTemplate != null,
-            onClick = { onUseTemplate(selectedGenerationTemplate) },
-        )
-        Spacer(Modifier.height(12.dp))
-        BottomNavigation(
-            selectedIndex = selectedNavigation,
-            onSelect = onNavigationSelect,
-        )
-    }
+        },
+        onExpose = { template, position -> template.toGenerationSelection(section)?.let { onTemplateExpose(it, position) } },
+        onLoadMore = { onLoadMoreTemplates(section) }, onRetry = { onTemplateRetry(section) },
+        onBalance = onBalanceClick, onRecord = onRecordClick, onNavigation = onNavigationSelect,
+        statusContent = {
+            AttributionProfileRetry(attributionProfileRetryRequired, onAttributionProfileRetry)
+            TemplateTaskStatusBadges(selectedNavigation, homeTaskBadges, Modifier.padding(horizontal = 16.dp))
+        },
+        section = section,
+    )
 }
 
 @Composable
@@ -2131,6 +2153,11 @@ private fun TemplateFeedPager(
             modifier = Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 14.dp),
         )
     }
+}
+
+@Composable
+internal fun TemplateTaskStatusBadges(selectedNavigation: Int, badges: List<HomeTaskStatusBadge>, modifier: Modifier = Modifier) {
+    if (selectedNavigation == 4 && badges.isNotEmpty()) HomeTaskStatusBadges(badges, modifier)
 }
 
 @Composable
@@ -2324,6 +2351,7 @@ private fun MeScreen(
     diamondBalance: Int,
     onNavigationSelect: (Int) -> Unit,
     onBalanceClick: () -> Unit,
+    onSettingsBack: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val systemModuleRows = meSystemModulePresentations()
@@ -2338,7 +2366,14 @@ private fun MeScreen(
             .navigationBarsPadding()
             .padding(horizontal = 20.dp, vertical = 8.dp),
     ) {
-        MeHeader(diamondBalance = diamondBalance, onBalanceClick = onBalanceClick)
+        if (onSettingsBack != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val back = stringResource(R.string.me_settings_back)
+                BackGlyph(Modifier.size(48.dp).clickable(onClick = onSettingsBack).semantics { contentDescription = back })
+                Spacer(Modifier.width(12.dp))
+                Text(stringResource(R.string.me_settings), color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            }
+        } else MeHeader(diamondBalance = diamondBalance, onBalanceClick = onBalanceClick)
         Spacer(Modifier.height(28.dp))
         ProfileCard(
             profileName = profileName,
@@ -3048,6 +3083,7 @@ internal fun GenerationResultScreen(
     val context = LocalContext.current
     val reportSuccess = stringResource(R.string.report_success)
     var reportOpen by remember(task.taskId) { mutableStateOf(false) }
+    BackHandler(enabled = !reportOpen, onBack = onBack)
     var videoPlaybackFailed by remember(task.taskId, task.resultUrl) {
         mutableStateOf(initialVideoPlaybackFailed)
     }
@@ -3165,7 +3201,7 @@ internal fun GenerationResultScreen(
 }
 
 @Composable
-private fun MyTaskProgressiveImage(
+internal fun MyTaskProgressiveImage(
     imageUrl: String,
     thumbnailUrl: String?,
     contentDescription: String?,
@@ -4032,134 +4068,42 @@ internal fun TopUpScreen(
     onPreparePayment: () -> Unit,
     onRetry: () -> Unit,
     onNavigationSelect: (Int) -> Unit,
+    onBack: (() -> Unit)? = null,
+    canRetryPayment: Boolean? = null,
+    canStartPayment: Boolean? = null,
+    onHistory: () -> Unit = {},
 ) {
     val catalog = state.catalog
-    val packs = catalog?.products.orEmpty().mapIndexed { index, product ->
-        product.toCreditPackPresentation(catalog?.userInfo, index)
-    }
+    val packs = catalog?.products.orEmpty().mapIndexed { index, product -> product.toCreditPackPresentation(catalog?.userInfo, index) }
     val selectedPack = packs.firstOrNull { it.id == selectedProductId }
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        TopUpHeader(diamondBalance = diamondBalance)
-        Spacer(Modifier.height(12.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            DiamondIcon(8.dp)
-            Spacer(Modifier.width(7.dp))
-            Text(
-                text = stringResource(R.string.choose_pack),
-                color = Color.White,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.width(10.dp))
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(1.dp)
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(AchatPink.copy(alpha = 0.7f), Color.Transparent),
-                        ),
-                    ),
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            when {
-                state.isLoading -> TopUpStatusMessage(stringResource(R.string.top_up_loading))
-                !state.errorMessage.isNullOrBlank() -> TopUpErrorState(state.errorMessage, onRetry)
-                packs.isEmpty() -> TopUpStatusMessage(stringResource(R.string.top_up_empty))
-                else -> {
-                    packs.forEach { pack ->
-                        val selected = pack.id == selectedProductId
-                        CreditPackCard(
-                            pack = pack,
-                            selected = selected,
-                            enabled = productSelectionEnabled,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(creditPackHeightDp(selected).dp),
-                            onSelect = { onProductSelect(pack.id) },
-                        )
-                    }
-                    selectedPack?.let { pack ->
-                        Spacer(Modifier.height(1.dp))
-                        Row(
-                            modifier = Modifier.align(Alignment.CenterHorizontally),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            DiamondIcon(7.dp)
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = stringResource(
-                                    R.string.credit_pack_summary,
-                                    pack.credits + (pack.bonus ?: 0),
-                                ),
-                                color = AchatMuted,
-                                style = MaterialTheme.typography.labelSmall,
-                            )
-                        }
-                        Spacer(Modifier.height(2.dp))
-                        TopUpPurchaseStatus(purchaseState, checkoutState)
-                        if (isReconciling) {
-                            TopUpInlineStatus(stringResource(R.string.top_up_payment_waiting), AchatCyan)
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        val isPreparing = purchaseState is TopUpPurchaseState.Preparing
-                        val terminalCheckout = checkoutState is TopUpCheckoutState.Failed ||
-                            checkoutState == TopUpCheckoutState.Cancelled ||
-                            checkoutState == TopUpCheckoutState.UserCancelled ||
-                            checkoutState == TopUpCheckoutState.TimedOut ||
-                            checkoutState is TopUpCheckoutState.Succeeded
-                        val isReady = (purchaseState is TopUpPurchaseState.OfficialReady ||
-                            purchaseState is TopUpPurchaseState.ThirdPartyReady) && !terminalCheckout
-                        StartChatButton(
-                            label = when {
-                                isPreparing || isReconciling -> stringResource(R.string.top_up_preparing)
-                                isReady -> stringResource(R.string.top_up_ready)
-                                checkoutState is TopUpCheckoutState.Failed && checkoutState.actionRes != null ->
-                                    stringResource(checkoutState.actionRes)
-                                purchaseState is TopUpPurchaseState.Error || terminalCheckout ->
-                                    stringResource(R.string.top_up_try_again)
-                                else -> stringResource(R.string.top_up_continue)
-                            },
-                            enabled = !isPreparing && !isReady && !isReconciling,
-                            onClick = onPreparePayment,
-                        )
-                        Spacer(Modifier.height(2.dp))
-                    }
-                    WalletTransactionHistory(state.transactions)
-                }
-            }
-            if ((selectedPack == null || state.isLoading || !state.errorMessage.isNullOrBlank()) &&
-                (purchaseState != TopUpPurchaseState.Idle || checkoutState != TopUpCheckoutState.Idle)) {
-                TopUpPurchaseStatus(purchaseState, checkoutState)
-                StartChatButton(
-                    label = stringResource(R.string.top_up_try_again),
-                    enabled = !isReconciling && (checkoutState is TopUpCheckoutState.Failed ||
-                        checkoutState == TopUpCheckoutState.Cancelled || checkoutState == TopUpCheckoutState.UserCancelled ||
-                        checkoutState == TopUpCheckoutState.TimedOut),
-                    onClick = onPreparePayment,
-                )
-            }
-        }
-        Spacer(Modifier.height(12.dp))
-        BottomNavigation(
-            selectedIndex = selectedNavigation,
-            onSelect = onNavigationSelect,
-        )
+    val terminal = checkoutState is TopUpCheckoutState.Failed || checkoutState == TopUpCheckoutState.Cancelled ||
+        checkoutState == TopUpCheckoutState.UserCancelled || checkoutState == TopUpCheckoutState.TimedOut
+    val retry = canRetryPayment ?: terminal
+    val working = isReconciling || purchaseState is TopUpPurchaseState.Preparing || checkoutState == TopUpCheckoutState.Launching ||
+        checkoutState == TopUpCheckoutState.Closing || checkoutState is TopUpCheckoutState.AwaitingPayment
+    val canBuy = canStartPayment ?: (productSelectionEnabled && purchaseState !is TopUpPurchaseState.Preparing &&
+        (purchaseState !is TopUpPurchaseState.OfficialReady && purchaseState !is TopUpPurchaseState.ThirdPartyReady || terminal || checkoutState is TopUpCheckoutState.Succeeded))
+    val label = when {
+        retry && checkoutState is TopUpCheckoutState.AwaitingPayment -> R.string.credits_check_payment
+        retry -> (checkoutState as? TopUpCheckoutState.Failed)?.actionRes ?: R.string.top_up_try_again
+        working -> R.string.top_up_preparing
+        selectedProductId?.let { id -> catalog?.products?.firstOrNull { it.id == id }?.isSubscription } == true -> R.string.credits_subscribe
+        else -> R.string.credits_purchase
     }
+    CreditsPurchaseScreen(
+        balance = diamondBalance, packs = if (state.errorMessage == null) packs else emptyList(), selectedId = selectedProductId,
+        selectionEnabled = productSelectionEnabled, loading = state.isLoading, error = state.errorMessage,
+        actionLabel = stringResource(label), actionEnabled = !isReconciling && (retry || (!working && canBuy && selectedPack != null && !state.isLoading && state.errorMessage == null)),
+        onSelect = onProductSelect, onPurchase = onPreparePayment, onRetryCatalog = onRetry,
+        onBack = onBack ?: { onNavigationSelect(4) },
+        status = {
+            if ((purchaseState is TopUpPurchaseState.OfficialReady || purchaseState is TopUpPurchaseState.ThirdPartyReady) && checkoutState == TopUpCheckoutState.Idle) {
+                TopUpInlineStatus(stringResource(R.string.top_up_preparing), AchatCyan)
+            } else TopUpPurchaseStatus(purchaseState, checkoutState)
+            if (isReconciling) TopUpInlineStatus(stringResource(R.string.top_up_payment_waiting), AchatCyan)
+        },
+        onHistory = onHistory,
+    )
 }
 
 @Composable
@@ -4174,12 +4118,10 @@ private fun TopUpPurchaseStatus(state: TopUpPurchaseState, checkoutState: TopUpC
             AchatCyan,
         )
         is TopUpCheckoutState.Succeeded -> TopUpInlineStatus(stringResource(R.string.top_up_payment_success), AchatCyan)
-        is TopUpCheckoutState.Failed -> TopUpInlineStatus(
-            if (checkoutState.recoverySummary != null) diagnosticString(
-                (checkoutState.messageRes?.let { stringResource(it) } ?: checkoutState.message) +
-                    "\n${checkoutState.recoverySummary}", "E-602",
-            ) else checkoutState.messageRes?.let { stringResource(it) } ?: checkoutState.message, AchatPink,
-        )
+        is TopUpCheckoutState.Failed -> {
+            TopUpInlineStatus(checkoutState.messageRes?.let { stringResource(it) } ?: checkoutState.message, AchatPink)
+            checkoutState.recoverySummary?.let { TopUpInlineStatus(it, AchatMuted) }
+        }
         TopUpCheckoutState.Cancelled -> TopUpInlineStatus(stringResource(R.string.top_up_payment_cancelled), AchatMuted)
         TopUpCheckoutState.UserCancelled -> TopUpInlineStatus(
             diagnosticString(stringResource(R.string.top_up_payment_cancelled), "E-603"), AchatMuted,
@@ -4222,7 +4164,7 @@ private fun WalletTransactionHistory(transactions: List<WalletTransaction>) {
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         Text(
-            text = "RECENT WALLET ACTIVITY",
+            text = stringResource(R.string.credits_wallet_activity),
             color = AchatCyan,
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
@@ -4236,7 +4178,7 @@ private fun WalletTransactionHistory(transactions: List<WalletTransaction>) {
                 Column(Modifier.weight(1f)) {
                     Text(
                         text = transaction.description ?: transaction.type.ifBlank {
-                            transaction.category ?: "Wallet transaction"
+                            transaction.category ?: stringResource(R.string.credits_wallet_transaction)
                         },
                         color = Color.White,
                         fontSize = 11.sp,
@@ -4722,7 +4664,7 @@ private fun StartChatButton(label: String, enabled: Boolean, onClick: () -> Unit
 }
 
 @Composable
-private fun UploadPhotoScreen(
+internal fun UploadPhotoScreen(
     selectedNavigation: Int,
     onBack: () -> Unit,
     onNavigationSelect: (Int) -> Unit,
@@ -4736,6 +4678,7 @@ private fun UploadPhotoScreen(
     analyticsUserId: String?,
     modifier: Modifier = Modifier,
 ) {
+    var photoPickerOpen by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     val reportSuccess = stringResource(R.string.report_success)
     var reportTarget by remember(selectedTemplate?.templateId) { mutableStateOf<String?>(null) }
@@ -4747,14 +4690,29 @@ private fun UploadPhotoScreen(
     }
     var selectedImageUriString by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedImageUri = selectedImageUriString?.let(Uri::parse)
+    var recentPhotoUris by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     var uploadedResourceId by rememberSaveable { mutableStateOf<String?>(null) }
     var generationSubmissionKey by rememberSaveable { mutableStateOf<GenerationSubmissionKey?>(null) }
     var currentTask by remember { mutableStateOf<VisualGenerationTask?>(null) }
     var uploadInProgress by remember { mutableStateOf(false) }
     var uploadMessage by remember { mutableStateOf<TransientMessage?>(null) }
     var uploadMessageSerial by remember { mutableIntStateOf(0) }
+    var selectedMode by rememberSaveable(selectedTemplate?.templateId) {
+        mutableStateOf(defaultGenerationMode(generationModes(selectedTemplate)))
+    }
+    fun handleBack() {
+        if (uploadInProgress && !uploadedResourceId.isNullOrBlank()) return
+        if (shouldShowGenerationMode(uploadedResourceId, selectedTemplate)) {
+            selectedImageUriString = null
+            uploadedResourceId = null
+            generationSubmissionKey = null
+            uploadMessage = null
+        } else onBack()
+    }
+    BackHandler(enabled = !photoPickerOpen, onBack = ::handleBack)
     val chooseFirstMessage = stringResource(R.string.upload_choose_first)
     val liveTemplateRequired = stringResource(R.string.live_template_required)
+    val insufficientBalanceMessage = stringResource(R.string.generation_insufficient_balance)
     val taskCreatedPattern = stringResource(R.string.task_created)
     val taskStatusPattern = stringResource(R.string.task_status)
     val taskSucceededPattern = stringResource(R.string.task_succeeded)
@@ -4796,11 +4754,9 @@ private fun UploadPhotoScreen(
             }
         }
     }
-    val pickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode != Activity.RESULT_OK) {
-            return@rememberLauncherForActivityResult
-        }
-        val uri = result.data?.data ?: return@rememberLauncherForActivityResult
+    fun acceptSelectedPhoto(uri: Uri) {
+        photoPickerOpen = false
+        recentPhotoUris = ArrayList(recordPickerPhotoHistory(recentPhotoUris, uri.toString()))
         selectedImageUriString = uri.toString()
         uploadedResourceId = null
         generationSubmissionKey = null
@@ -4808,7 +4764,12 @@ private fun UploadPhotoScreen(
         selectedTemplate?.let { generationAnalytics.localPrepare(it.analyticsContext(), success = true) }
         uploadSelectedPhoto(uri)
     }
-    fun launchPhotoPicker() {
+    val pickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
+        val uri = result.data?.data ?: return@rememberLauncherForActivityResult
+        acceptSelectedPhoto(uri)
+    }
+    fun launchDevicePhotoPicker() {
         if (!uploadInProgress) {
             runCatching {
                 pickerLauncher.launch(
@@ -4826,6 +4787,89 @@ private fun UploadPhotoScreen(
         }
     }
 
+    fun launchPhotoPicker() {
+        if (!uploadInProgress) photoPickerOpen = true
+    }
+
+    fun submitGeneration() {
+        if (uploadInProgress) return
+        val resourceId = uploadedResourceId
+        if (resourceId.isNullOrBlank()) {
+            showUploadMessage(chooseFirstMessage, TransientMessageTone.Error)
+            return
+        }
+        val template = generationSelectionForMode(selectedTemplate, selectedMode)
+        if (template == null || template.templateId.isBlank()) {
+            showUploadMessage(liveTemplateRequired, TransientMessageTone.Error)
+            return
+        }
+        if (generationNeedsTopUp(template.quotedDiamondCost, diamondBalance)) {
+            uploadInProgress = true
+            showUploadMessage(context.diagnosticMessage(insufficientBalanceMessage, "E-405"), TransientMessageTone.Error)
+            scope.launch {
+                try {
+                    awaitGenerationTopUpRoute(onInsufficientBalanceTopUp)
+                } finally {
+                    uploadInProgress = false
+                }
+            }
+            return
+        }
+        uploadInProgress = true
+        uploadMessage = null
+        val submissionKey = nextGenerationSubmissionKey(
+            previous = generationSubmissionKey,
+            templateId = template.templateId,
+            quality = template.quality,
+            resourceId = resourceId,
+        )
+        generationSubmissionKey = submissionKey
+        generationAnalytics.clickGenerate(template.analyticsContext(), submissionKey.idempotencyKey)
+        scope.launch {
+            try {
+                val task = repository.createVisualGenerationTask(
+                    modality = template.modality,
+                    templateId = template.templateId,
+                    quality = template.quality,
+                    resourceId = resourceId,
+                    idempotencyKey = submissionKey.idempotencyKey,
+                )
+                generationAnalytics.submitResult(
+                    template.analyticsContext(), submissionKey.idempotencyKey, task, null,
+                )
+                currentTask = task
+                onTaskCreated(
+                    task,
+                    task.toTrackedGenerationTask(template.title).copy(
+                        requestId = submissionKey.idempotencyKey,
+                        templateId = template.templateId,
+                        categoryId = template.categoryId,
+                        quality = template.quality,
+                        diamondCost = task.diamondCost,
+                        source = template.source,
+                    ),
+                )
+                showUploadMessage(taskCreatedPattern.format(task.taskId.take(8), task.status))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                generationAnalytics.submitResult(
+                    template.analyticsContext(), submissionKey.idempotencyKey, null, error,
+                )
+                showUploadMessage(
+                    text = context.diagnosticMessage(operationUserMessage(error, uploadFailedMessage), generationSubmissionDiagnostic(error)),
+                    tone = TransientMessageTone.Error,
+                )
+                val topUpRouteDelayMillis = generationTopUpRouteDelayMillis(error)
+                if (topUpRouteDelayMillis != null) {
+                    awaitGenerationTopUpRoute(onInsufficientBalanceTopUp)
+                }
+            } finally {
+                uploadInProgress = false
+            }
+        }
+    }
+
     val trackedCurrentTask = currentTask?.taskId?.let { taskId ->
         trackedTasks.firstOrNull { it.taskId == taskId }
     }
@@ -4834,7 +4878,7 @@ private fun UploadPhotoScreen(
         if (task.isFinished) {
             val requestId = generationSubmissionKey?.idempotencyKey
             val initial = currentTask
-            val template = selectedTemplate
+            val template = generationSelectionForMode(selectedTemplate, generationSubmissionKey?.quality)
             if (requestId != null && initial != null && template != null) {
                 generationAnalytics.terminalResult(
                     template.analyticsContext(),
@@ -4861,6 +4905,28 @@ private fun UploadPhotoScreen(
         showUploadMessage(taskStatusPattern.format(task.taskId.take(8), task.status))
     }
 
+    if (shouldShowUploadTemplatePreview(selectedImageUriString)) {
+        UploadTemplatePreviewScreen(
+            title = selectedTemplate?.title ?: stringResource(R.string.upload_photo_title),
+            media = selectedTemplate?.previewMedia ?: TemplatePreviewMedia.Unavailable,
+            durationSeconds = selectedTemplate?.durationSeconds ?: 0,
+            enabled = !uploadInProgress && selectedTemplate != null,
+            onChoosePhoto = ::launchPhotoPicker, onBack = onBack,
+            playPreview = !photoPickerOpen && reportTarget == null,
+            onReport = selectedTemplate?.let { template -> { reportTarget = template.templateId } },
+            modifier = modifier,
+        )
+    } else if (shouldShowGenerationMode(uploadedResourceId, selectedTemplate)) {
+        GenerationModeScreen(
+            localPhoto = selectedImageUri, templateMedia = selectedTemplate?.previewMedia ?: TemplatePreviewMedia.Unavailable,
+            modes = generationModes(selectedTemplate), selectedMode = selectedMode,
+            busy = uploadInProgress, playPreview = !photoPickerOpen && reportTarget == null,
+            error = uploadMessage?.takeIf { it.tone == TransientMessageTone.Error }?.text,
+            onModeSelect = { if (!uploadInProgress) { selectedMode = it; uploadMessage = null } },
+            onGenerate = ::submitGeneration, onBack = ::handleBack,
+            onChangePhoto = ::launchPhotoPicker, modifier = modifier,
+        )
+    } else {
     Column(
         modifier = modifier
             .statusBarsPadding()
@@ -4881,7 +4947,7 @@ private fun UploadPhotoScreen(
             TemplatePreviewPanel(
                 media = selectedTemplate?.previewMedia ?: TemplatePreviewMedia.LocalPlaceholder,
                 durationSeconds = selectedTemplate?.durationSeconds ?: 5,
-                isPlaying = selectedTemplate?.previewMedia is TemplatePreviewMedia.RemoteVideo,
+                isPlaying = !photoPickerOpen && reportTarget == null && selectedTemplate?.previewMedia is TemplatePreviewMedia.RemoteVideo,
                 modifier = Modifier.fillMaxSize(),
             )
             selectedTemplate?.let { template ->
@@ -4916,77 +4982,21 @@ private fun UploadPhotoScreen(
             uploadInProgress = uploadInProgress,
             canContinue = uploadedResourceId != null,
             onChoosePhoto = ::launchPhotoPicker,
-            onContinue = {
-                val resourceId = uploadedResourceId
-                if (resourceId == null) {
-                    showUploadMessage(chooseFirstMessage, TransientMessageTone.Error)
-                    return@UploadActions
-                }
-                val template = selectedTemplate
-                if (template == null || template.templateId.isBlank()) {
-                    showUploadMessage(liveTemplateRequired, TransientMessageTone.Error)
-                    return@UploadActions
-                }
-                uploadInProgress = true
-                uploadMessage = null
-                val submissionKey = nextGenerationSubmissionKey(
-                    previous = generationSubmissionKey,
-                    templateId = template.templateId,
-                    quality = template.quality,
-                    resourceId = resourceId,
-                )
-                generationSubmissionKey = submissionKey
-                generationAnalytics.clickGenerate(template.analyticsContext(), submissionKey.idempotencyKey)
-                scope.launch {
-                    try {
-                        val task = repository.createVisualGenerationTask(
-                            modality = template.modality,
-                            templateId = template.templateId,
-                            quality = template.quality,
-                            resourceId = resourceId,
-                            idempotencyKey = submissionKey.idempotencyKey,
-                        )
-                        generationAnalytics.submitResult(
-                            template.analyticsContext(), submissionKey.idempotencyKey, task, null,
-                        )
-                        currentTask = task
-                        onTaskCreated(
-                            task,
-                            task.toTrackedGenerationTask(template.title).copy(
-                                requestId = submissionKey.idempotencyKey,
-                                templateId = template.templateId,
-                                categoryId = template.categoryId,
-                                quality = template.quality,
-                                diamondCost = task.diamondCost,
-                                source = template.source,
-                            ),
-                        )
-                        showUploadMessage(taskCreatedPattern.format(task.taskId.take(8), task.status))
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: Exception) {
-                        generationAnalytics.submitResult(
-                            template.analyticsContext(), submissionKey.idempotencyKey, null, error,
-                        )
-                        showUploadMessage(
-                            text = context.diagnosticMessage(operationUserMessage(error, uploadFailedMessage), generationSubmissionDiagnostic(error)),
-                            tone = TransientMessageTone.Error,
-                        )
-                        val topUpRouteDelayMillis = generationTopUpRouteDelayMillis(error.message)
-                        if (topUpRouteDelayMillis != null) {
-                            delay(topUpRouteDelayMillis)
-                            onInsufficientBalanceTopUp()
-                        }
-                    } finally {
-                        uploadInProgress = false
-                    }
-                }
-            },
+            onContinue = ::submitGeneration,
         )
         Spacer(Modifier.height(12.dp))
         BottomNavigation(
             selectedIndex = selectedNavigation,
             onSelect = onNavigationSelect,
+        )
+    }
+    }
+    if (photoPickerOpen) {
+        LocalPhotoPickerSheet(
+            recentPhotos = recentPhotoUris, selectedPhoto = selectedImageUriString,
+            onDismiss = { photoPickerOpen = false }, onBrowseDevice = ::launchDevicePhotoPicker,
+            onSelectPhoto = { if (!uploadInProgress) acceptSelectedPhoto(Uri.parse(it)) },
+            onClearRecent = { recentPhotoUris = arrayListOf() },
         )
     }
     reportTarget?.let { mediaId ->
